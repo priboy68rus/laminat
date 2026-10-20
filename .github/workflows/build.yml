@@ -45,7 +45,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Tags like v0.2.0-beta1 are pre-releases; plain versions become the latest release.
+          PRERELEASE=""
+          [[ "$GITHUB_REF_NAME" == *-* ]] && PRERELEASE="--prerelease"
           gh release create "$GITHUB_REF_NAME" "$ZIP" \
             --title "Laminat $GITHUB_REF_NAME" \
-            --prerelease \
+            $PRERELEASE \
             --notes-file .github/release-notes.md
