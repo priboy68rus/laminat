@@ -13,7 +13,7 @@ if [[ -f "$DEST/VERSION" && "$(cat "$DEST/VERSION")" == "$VERSION" && -f "$DEST/
   exit 0
 fi
 
-echo "Fetching DuckDB $VERSION…"
+echo "Fetching DuckDB ${VERSION}..."
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
