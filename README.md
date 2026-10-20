@@ -36,6 +36,10 @@ build/Build/Products/Debug/laminat-cli preview samples/types.parquet --runs 3 --
 build/Build/Products/Debug/laminat-cli exec "COPY (SELECT * FROM range(10)) TO '/tmp/t.parquet'"
 ```
 
+## Test data
+
+`scripts/make-testdata.sh` generates large files into `testdata/` (not committed): 30M rows / 1.7 GB and 501 columns.
+
 ## Release
 
 Push a `v*` tag; GitHub Actions builds a universal, ad-hoc signed app and publishes a pre-release.

@@ -10,3 +10,5 @@ QuickLook/*.entitlements
 dist/
 # Fetched by scripts/fetch-duckdb.sh
 Vendor/duckdb/
+# Large generated test files (scripts/make-testdata.sh)
+testdata/
