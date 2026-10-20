@@ -44,11 +44,21 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
+          # Sparkle appcast for self-update, attached to the release next to the zip.
+          ASSETS=("$ZIP")
+          if [[ -n "$SPARKLE_PRIVATE_KEY" ]]; then
+            ./scripts/make-appcast.sh "$ZIP" "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$(basename "$ZIP")"
+            ASSETS+=(dist/appcast.xml)
+          else
+            echo "::warning::SPARKLE_PRIVATE_KEY secret is not set: release published without an appcast (no auto-update)"
+          fi
+
           # Tags like v0.2.0-beta1 are pre-releases; plain versions become the latest release.
           PRERELEASE=""
           [[ "$GITHUB_REF_NAME" == *-* ]] && PRERELEASE="--prerelease"
-          gh release create "$GITHUB_REF_NAME" "$ZIP" \
+          gh release create "$GITHUB_REF_NAME" "${ASSETS[@]}" \
             --title "Laminat $GITHUB_REF_NAME" \
             $PRERELEASE \
             --notes-file .github/release-notes.md

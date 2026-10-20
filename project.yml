@@ -1,5 +1,11 @@
 name: Laminat
 
+packages:
+  # Self-update (docs/IDEAS.md → Дистрибуция). Pinned; appcast is published with each GitHub release.
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.0
+
 options:
   deploymentTarget:
     macOS: "15.0"
@@ -8,8 +14,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.1.1"
-    CURRENT_PROJECT_VERSION: "5"
+    MARKETING_VERSION: "0.1.2"
+    CURRENT_PROJECT_VERSION: "6"
     # Prototype: ad-hoc signing ("Sign to Run Locally"), no Apple Developer account.
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Manual
@@ -18,6 +24,9 @@ settings:
     # DuckDB C library, fetched by scripts/fetch-duckdb.sh into Vendor/duckdb.
     SWIFT_INCLUDE_PATHS: $(SRCROOT)/Vendor/CDuckDB
     LIBRARY_SEARCH_PATHS: $(SRCROOT)/Vendor/duckdb
+    # Sparkle EdDSA public key; the private key lives in the login keychain (account "laminat") and in
+    # the SPARKLE_PRIVATE_KEY GitHub secret.
+    SPARKLE_PUBLIC_KEY: nbSjkLNIyysz5AoJ6FVvKVbUbHFdR261BzEi1zr/JrI=
 
 targets:
   Laminat:
@@ -40,6 +49,12 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSPrincipalClass: NSApplication
         CFBundleIconName: AppIcon
+        # Sparkle: the appcast is attached to every GitHub release, so "latest/download" always points
+        # at the newest one. Updates are verified with this EdDSA public key.
+        SUFeedURL: https://github.com/priboy68rus/laminat/releases/latest/download/appcast.xml
+        SUPublicEDKey: $(SPARKLE_PUBLIC_KEY)
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
         LSApplicationCategoryType: public.app-category.developer-tools
         NSHumanReadableCopyright: ""
         # .parquet has no system UTI, so the app declares (exports) one. Exported rather than imported:
@@ -67,6 +82,7 @@ targets:
       - framework: Vendor/duckdb/libduckdb.dylib
         embed: true
         codeSign: true
+      - package: Sparkle
 
   LaminatQuickLook:
     type: app-extension

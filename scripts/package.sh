@@ -27,6 +27,8 @@ APP="build/Build/Products/Release/Laminat.app"
 
 # Re-sign inside-out so the dylib, the extension and the app have consistent ad-hoc signatures.
 codesign --force --sign - "$APP/Contents/Frameworks/libduckdb.dylib"
+# Sparkle ships helper apps and XPC services inside its framework; ad-hoc sign them all.
+codesign --force --deep --sign - "$APP/Contents/Frameworks/Sparkle.framework"
 for target in QuickLook:LaminatQuickLook Thumbnail:LaminatThumbnail Spotlight:LaminatSpotlight; do
   dir="${target%%:*}"; name="${target##*:}"
   [[ -d "$APP/Contents/PlugIns/$name.appex" ]] || continue  # not embedded

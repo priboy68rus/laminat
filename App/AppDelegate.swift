@@ -1,8 +1,19 @@
 import AppKit
+import Sparkle
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
+    /// Sparkle: checks the GitHub appcast daily (SUFeedURL / SUScheduledCheckInterval in Info.plist).
+    private(set) lazy var updaterController = SPUStandardUpdaterController(
+        startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
+
     func applicationWillFinishLaunching(_ notification: Notification) {
-        NSApp.mainMenu = MainMenu.make()
+        NSApp.mainMenu = MainMenu.make(updater: updaterController)
+    }
+
+    /// Developer override for testing updates against a local appcast:
+    /// `defaults write com.priboy68rus.laminat LaminatFeedURL http://127.0.0.1:8765/appcast.xml`
+    func feedURLString(for updater: SPUUpdater) -> String? {
+        UserDefaults.standard.string(forKey: "LaminatFeedURL")
     }
 
     /// Launched without a file (or re-activated with no windows): show the Open panel, like Preview.
@@ -20,12 +31,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 enum MainMenu {
-    static func make() -> NSMenu {
+    static func make(updater: SPUStandardUpdaterController) -> NSMenu {
         let appName = ProcessInfo.processInfo.processName
         let main = NSMenu()
 
         main.addSubmenu(appName, [
             item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
+            {
+                let check = item("Check for Updates…", #selector(SPUStandardUpdaterController.checkForUpdates(_:)))
+                check.target = updater
+                return check
+            }(),
             .separator(),
             item("Hide \(appName)", #selector(NSApplication.hide(_:)), "h"),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
