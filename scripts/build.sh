@@ -26,9 +26,13 @@ cp -R "$APP_SRC" "$APP_DST"
 
 # Register the app (and its UTI) with Launch Services, and the extension with PluginKit.
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
-# xcodebuild registers the build product too; drop it so only the installed copy is used.
-pluginkit -r "$APP_SRC/Contents/PlugIns/LaminatQuickLook.appex" 2>/dev/null || true
-"$LSREGISTER" -u "$APP_SRC" 2>/dev/null || true
+# xcodebuild registers every build product (Debug and Release); drop them all so Quick Look
+# only ever uses the installed copy.
+for built in build/Build/Products/*/Laminat.app; do
+  [[ -d "$built" ]] || continue
+  pluginkit -r "$built/Contents/PlugIns/LaminatQuickLook.appex" 2>/dev/null || true
+  "$LSREGISTER" -u "$built" 2>/dev/null || true
+done
 "$LSREGISTER" -f "$APP_DST"
 pluginkit -a "$APP_DST/Contents/PlugIns/LaminatQuickLook.appex" || true
 qlmanage -r >/dev/null 2>&1 || true
