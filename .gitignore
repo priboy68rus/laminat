@@ -7,3 +7,4 @@ xcuserdata/
 App/Info.plist
 QuickLook/Info.plist
 QuickLook/*.entitlements
+dist/
