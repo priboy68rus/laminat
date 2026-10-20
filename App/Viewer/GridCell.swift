@@ -29,8 +29,9 @@ final class GridCell: NSView {
     }
 
     private static let leftParagraph = paragraph(.left, .byTruncatingTail)
-    /// Numbers are cut in the middle so an exponent like "e-08" stays visible.
-    private static let numberParagraph = paragraph(.right, .byTruncatingMiddle)
+    private static let numberParagraph = paragraph(.right, .byTruncatingTail)
+    /// Numbers with an exponent are cut in the middle so "e-08" stays visible.
+    private static let exponentParagraph = paragraph(.right, .byTruncatingMiddle)
     private static let rowNumberParagraph = paragraph(.right, .byTruncatingHead)
     private static let lineHeight = ceil(font.ascender - font.descender + font.leading)
 
@@ -45,7 +46,7 @@ final class GridCell: NSView {
         case .rowNumber: color = selected ? .alternateSelectedControlTextColor.withAlphaComponent(0.8) : .secondaryLabelColor
         }
         let paragraph = switch style {
-        case .number: Self.numberParagraph
+        case .number: text.contains("e") ? Self.exponentParagraph : Self.numberParagraph
         case .rowNumber: Self.rowNumberParagraph
         default: Self.leftParagraph
         }

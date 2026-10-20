@@ -63,6 +63,34 @@ final class Connection {
     func execute(_ sql: String) throws {
         _ = try query(sql)
     }
+
+    enum StatementKind { case select, explain, other }
+
+    /// Parses and binds `sql` without running it and returns the kind of every statement in it.
+    /// Throws the parser / binder error (with DuckDB's position marker) for invalid SQL.
+    func statementKinds(_ sql: String) throws -> [StatementKind] {
+        var extracted: duckdb_extracted_statements?
+        defer { duckdb_destroy_extracted(&extracted) }
+        let count = duckdb_extract_statements(handle, sql, &extracted)
+        if count == 0 {
+            let message = duckdb_extract_statements_error(extracted).map { String(cString: $0) }
+            throw EngineError(message: message ?? "No SQL statement to run")
+        }
+
+        return try (0..<count).map { index in
+            var prepared: duckdb_prepared_statement?
+            defer { duckdb_destroy_prepare(&prepared) }
+            if duckdb_prepare_extracted_statement(handle, extracted, index, &prepared) != DuckDBSuccess {
+                let message = duckdb_prepare_error(prepared).map { String(cString: $0) } ?? "unknown error"
+                throw EngineError(message: message)
+            }
+            switch duckdb_prepared_statement_type(prepared) {
+            case DUCKDB_STATEMENT_TYPE_SELECT: return .select
+            case DUCKDB_STATEMENT_TYPE_EXPLAIN: return .explain
+            default: return .other
+            }
+        }
+    }
 }
 
 final class QueryResult {

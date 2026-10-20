@@ -3,9 +3,11 @@ import AppKit
 /// The data grid of a document window: virtualized NSTableView, lazy page loading,
 /// sorting by header click, "contains" filters in the header, and a status bar.
 final class GridViewController: NSViewController {
-    let session: DataSession
+    let session: TableSession
+    /// Extra status bar text after the row and column counts (e.g. file size, query time).
+    var details: String? { didSet { if isViewLoaded { updateStatus() } } }
 
-    private var currentView: DataSession.View
+    private var currentView: TableSession.View
     private var spec = ViewSpec()
 
     // Page cache (main thread only).
@@ -35,8 +37,9 @@ final class GridViewController: NSViewController {
         Int(column.identifier.rawValue.dropFirst()) ?? -1
     }
 
-    init(session: DataSession) {
+    init(session: TableSession, details: String? = nil) {
         self.session = session
+        self.details = details
         self.currentView = session.identityView
         // Keep roughly 5M cells cached regardless of how wide the file is.
         maxCachedPages = max(8, 5_000_000 / max(1, session.pageSize * max(1, session.columns.count)))
@@ -117,7 +120,7 @@ final class GridViewController: NSViewController {
         tableView.allowsMultipleSelection = true
         tableView.usesAutomaticRowHeights = false
 
-        let digits = String(max(1, session.summary.rowCount)).count
+        let digits = String(max(1, session.totalRows)).count
         let rowNumber = NSTableColumn(identifier: Self.rowNumberID)
         rowNumber.headerCell = TitleHeaderCell(textCell: "#")
         rowNumber.width = CGFloat(max(3, digits)) * 8 + 16
@@ -167,7 +170,7 @@ final class GridViewController: NSViewController {
         requestVisiblePages()
     }
 
-    private func pageCount(for view: DataSession.View) -> Int {
+    private func pageCount(for view: TableSession.View) -> Int {
         (view.rowCount + session.pageSize - 1) / session.pageSize
     }
 
@@ -336,7 +339,7 @@ final class GridViewController: NSViewController {
         }
         statusLabel.textColor = .secondaryLabelColor
 
-        let total = Int(session.summary.rowCount)
+        let total = session.totalRows
         var parts: [String] = []
         if currentView.spec.activeFilters.isEmpty {
             parts.append("\(format(total)) rows")
@@ -344,7 +347,7 @@ final class GridViewController: NSViewController {
             parts.append("\(format(currentView.rowCount)) of \(format(total)) rows")
         }
         parts.append("\(session.columns.count) columns")
-        parts.append(ByteCountFormatter.string(fromByteCount: session.summary.fileSize, countStyle: .file))
+        if let details { parts.append(details) }
         if let sort = currentView.spec.sort {
             parts.append("sorted by \(session.columns[sort.column].name) \(sort.ascending ? "▲" : "▼")")
         }
@@ -379,7 +382,7 @@ final class GridViewController: NSViewController {
             }
             let values = (pages[page] ?? fetched[page])?[safe: row % session.pageSize] ?? []
             lines.append(zip(session.columns, values).map { column, raw in
-                tsv(CellFormatter.display(raw, kind: column.kind, maxChars: DataSession.maxCellChars) ?? "")
+                tsv(CellFormatter.display(raw, kind: column.kind, maxChars: TableSession.maxCellChars) ?? "")
             }.joined(separator: "\t"))
         }
         writeToPasteboard(lines.joined(separator: "\n"))
@@ -389,7 +392,7 @@ final class GridViewController: NSViewController {
         let row = tableView.clickedRow, column = tableView.clickedColumn - 1
         guard row >= 0, column >= 0, let values = rowValues(row) else { NSSound.beep(); return }
         let raw = values[column]
-        writeToPasteboard(CellFormatter.display(raw, kind: session.columns[column].kind, maxChars: DataSession.maxCellChars) ?? "NULL")
+        writeToPasteboard(CellFormatter.display(raw, kind: session.columns[column].kind, maxChars: TableSession.maxCellChars) ?? "NULL")
     }
 
     @objc func copyColumnName(_ sender: Any?) {
@@ -452,7 +455,7 @@ extension GridViewController: NSTableViewDataSource, NSTableViewDelegate {
             return cell
         }
         let column = session.columns[index]
-        if let text = CellFormatter.display(values[index], kind: column.kind, maxChars: DataSession.maxCellChars) {
+        if let text = CellFormatter.display(values[index], kind: column.kind, maxChars: TableSession.maxCellChars) {
             cell.text = text
             cell.style = column.kind == .number ? .number : .value
         } else {

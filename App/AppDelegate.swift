@@ -51,7 +51,17 @@ enum MainMenu {
         ])
 
         main.addSubmenu("View", [
+            item("Data", #selector(DocumentViewController.showData(_:)), "1"),
+            item("SQL", #selector(DocumentViewController.showSQL(_:)), "2"),
+            .separator(),
             item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]),
+        ])
+
+        main.addSubmenu("Query", [
+            item("Run", #selector(DocumentViewController.runQuery(_:)), "\r"),
+            item("Stop", #selector(DocumentViewController.stopQuery(_:)), "."),
+            .separator(),
+            item("Insert Template…", #selector(DocumentViewController.showTemplates(_:)), "t"),
         ])
 
         let window = main.addSubmenu("Window", [

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Sort and filters applied to the grid.
+/// Sort and filters applied to a grid.
 struct ViewSpec: Equatable {
     struct Sort: Equatable {
         var column: Int
@@ -15,17 +15,36 @@ struct ViewSpec: Equatable {
     var isIdentity: Bool { sort == nil && activeFilters.isEmpty }
 }
 
-/// One open Parquet file: a DuckDB instance plus the current view of the data.
+/// Paged, sortable, filterable access to one relation: the Parquet file itself or a SQL result table.
 ///
 /// Paging strategy (see SPEC §3):
-/// - identity view: pages are row ranges read straight from the file by `file_row_number`,
-///   so DuckDB only decodes the row groups that contain them;
-/// - sorted / filtered view: a small index table `(position → file_row_number)` is built once,
-///   then each page looks up its row numbers and fetches just those rows from the file.
+/// - identity view: pages are ranges of the row id (`file_row_number` for the file, `rowid` for a
+///   table), so DuckDB only reads the row groups that contain them;
+/// - sorted / filtered view: a small index table `(position → row id)` is built once, then each page
+///   looks up its row ids and fetches just those rows.
 ///
-/// All DuckDB work runs on two serial queues — one for page reads, one for building views — each
-/// with its own connection. Completions are delivered on the main queue.
-final class DataSession {
+/// DuckDB work runs on two serial queues — page reads and view builds — each with its own connection.
+/// Completions are delivered on the main queue.
+final class TableSession {
+    enum Source {
+        case parquet(URL)
+        case table(String)
+
+        var expression: String {
+            switch self {
+            case .parquet(let url): "read_parquet(\(SQL.string(url.path)), file_row_number = true)"
+            case .table(let name): SQL.identifier(name)
+            }
+        }
+
+        var rowID: String {
+            switch self {
+            case .parquet: "file_row_number"
+            case .table: "rowid"
+            }
+        }
+    }
+
     struct View {
         let id: Int
         let spec: ViewSpec
@@ -34,15 +53,15 @@ final class DataSession {
         let rowCount: Int
     }
 
-    let url: URL
-    let summary: ParquetSummary
-    var columns: [ParquetColumn] { summary.columns }
+    let source: Source
+    let columns: [ParquetColumn]
+    /// Rows in the relation before filtering.
+    let totalRows: Int
 
     static let maxCellChars = 300
-    /// Rows per page, smaller for wide files so a page stays around 100k cells.
+    /// Rows per page, smaller for wide relations so a page stays around 100k cells.
     let pageSize: Int
 
-    private let database: Database
     private let pageConnection: Connection
     private let buildConnection: Connection
     private let pageQueue = DispatchQueue(label: "laminat.pages", qos: .userInitiated)
@@ -52,20 +71,30 @@ final class DataSession {
     private var latestBuildID = 0
     private var buildingID: Int?
     private var nextViewID = 1
+    private var liveIndexTables: Set<String> = []
 
-    private var source: String { "read_parquet(\(SQL.string(url.path)), file_row_number = true)" }
+    /// Unique prefix for this session's index tables (several sessions share one database).
+    private let tablePrefix = "__laminat_view_\(UUID().uuidString.prefix(8))"
 
-    init(url: URL) throws {
-        self.url = url
-        database = try Database(settings: EngineProfile.app.settings)
+    init(database: Database, source: Source, columns: [ParquetColumn], totalRows: Int) throws {
+        self.source = source
+        self.columns = columns
+        self.totalRows = totalRows
         pageConnection = try Connection(database)
         buildConnection = try Connection(database)
-        summary = try ParquetFile(url: url, connection: pageConnection).summary()
-        pageSize = max(100, min(1000, 100_000 / max(1, summary.columns.count)))
+        pageSize = max(100, min(1000, 100_000 / max(1, columns.count)))
+    }
+
+    deinit {
+        let connection = buildConnection
+        let tables = liveIndexTables
+        buildQueue.async {
+            for table in tables { try? connection.execute("DROP TABLE IF EXISTS \(SQL.identifier(table))") }
+        }
     }
 
     var identityView: View {
-        View(id: 0, spec: ViewSpec(), indexTable: nil, rowCount: Int(summary.rowCount))
+        View(id: 0, spec: ViewSpec(), indexTable: nil, rowCount: totalRows)
     }
 
     // MARK: Pages
@@ -92,36 +121,37 @@ final class DataSession {
     private func fetchPage(_ page: Int, of view: View) throws -> [[String?]] {
         let start = page * pageSize
         let end = min(start + pageSize, view.rowCount)
-        guard start < end else { return [] }
+        guard start < end, !columns.isEmpty else { return [] }
 
+        let rowID = source.rowID
         let projection = (columns.map { ParquetFile.displayExpression($0, maxChars: Self.maxCellChars) }
-                          + ["file_row_number::VARCHAR"]).joined(separator: ", ")
+                          + ["\(rowID)::VARCHAR"]).joined(separator: ", ")
 
         guard let indexTable = view.indexTable else {
             let rows = try pageConnection.query("""
-                SELECT \(projection) FROM \(source)
-                WHERE file_row_number >= \(start) AND file_row_number < \(end)
-                ORDER BY file_row_number
+                SELECT \(projection) FROM \(source.expression)
+                WHERE \(rowID) >= \(start) AND \(rowID) < \(end)
+                ORDER BY \(rowID)
                 """).readStrings()
             return rows.map { Array($0.dropLast()) }
         }
 
-        let rowNumbers = try pageConnection.query("""
-            SELECT r::VARCHAR FROM \(indexTable) WHERE rowid >= \(start) AND rowid < \(end) ORDER BY rowid
+        let rowIDs = try pageConnection.query("""
+            SELECT r::VARCHAR FROM \(SQL.identifier(indexTable)) WHERE rowid >= \(start) AND rowid < \(end) ORDER BY rowid
             """).readStrings().compactMap { $0[0] }
-        guard !rowNumbers.isEmpty else { return [] }
+        guard !rowIDs.isEmpty else { return [] }
 
         let rows = try pageConnection.query("""
-            SELECT \(projection) FROM \(source) WHERE file_row_number IN (\(rowNumbers.joined(separator: ",")))
+            SELECT \(projection) FROM \(source.expression) WHERE \(rowID) IN (\(rowIDs.joined(separator: ",")))
             """).readStrings()
 
-        // The file scan returns rows in file order; put them back in view order.
-        var byRowNumber: [String: [String?]] = [:]
-        byRowNumber.reserveCapacity(rows.count)
+        // The scan returns rows in storage order; put them back in view order.
+        var byRowID: [String: [String?]] = [:]
+        byRowID.reserveCapacity(rows.count)
         for row in rows {
-            if let key = row.last ?? nil { byRowNumber[key] = Array(row.dropLast()) }
+            if let key = row.last ?? nil { byRowID[key] = Array(row.dropLast()) }
         }
-        return rowNumbers.map { byRowNumber[$0] ?? Array(repeating: nil, count: columns.count) }
+        return rowIDs.map { byRowID[$0] ?? Array(repeating: nil, count: columns.count) }
     }
 
     // MARK: Views
@@ -170,18 +200,23 @@ final class DataSession {
     /// Frees the index table of a view that is no longer displayed.
     func dropView(_ view: View) {
         guard let table = view.indexTable else { return }
-        buildQueue.async { [self] in try? buildConnection.execute("DROP TABLE IF EXISTS \(table)") }
+        buildQueue.async { [self] in
+            try? buildConnection.execute("DROP TABLE IF EXISTS \(SQL.identifier(table))")
+            lock.lock()
+            liveIndexTables.remove(table)
+            lock.unlock()
+        }
     }
 
     private func buildView(_ spec: ViewSpec, id: Int) throws -> View {
         guard !spec.isIdentity else {
-            return View(id: id, spec: spec, indexTable: nil, rowCount: Int(summary.rowCount))
+            return View(id: id, spec: spec, indexTable: nil, rowCount: totalRows)
         }
 
         let conditions = spec.activeFilters.sorted { $0.key < $1.key }.map { column, text in
             "contains(lower(\(ParquetFile.textExpression(columns[column]))), \(SQL.string(text.lowercased())))"
         }
-        var sql = "SELECT file_row_number AS r FROM \(source)"
+        var sql = "SELECT \(source.rowID) AS r FROM \(source.expression)"
         if !conditions.isEmpty { sql += " WHERE " + conditions.joined(separator: " AND ") }
         if let sort = spec.sort {
             sql += " ORDER BY \(SQL.identifier(columns[sort.column].name)) \(sort.ascending ? "ASC" : "DESC") NULLS LAST, r"
@@ -189,9 +224,12 @@ final class DataSession {
             sql += " ORDER BY r"
         }
 
-        let table = "view_\(id)"
-        try buildConnection.execute("CREATE TABLE \(table) AS \(sql)")
-        let count = try buildConnection.query("SELECT count(*)::VARCHAR FROM \(table)").readStrings().first?[0]
+        let table = "\(tablePrefix)_\(id)"
+        try buildConnection.execute("CREATE TABLE \(SQL.identifier(table)) AS \(sql)")
+        lock.lock()
+        liveIndexTables.insert(table)
+        lock.unlock()
+        let count = try buildConnection.query("SELECT count(*)::VARCHAR FROM \(SQL.identifier(table))").readStrings().first?[0]
         return View(id: id, spec: spec, indexTable: table, rowCount: count.flatMap { Int($0) } ?? 0)
     }
 }
