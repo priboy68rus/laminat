@@ -30,7 +30,7 @@ jobs:
           set -e
           if [[ $status -ne 0 ]]; then
             # Surface compiler errors as annotations (readable without downloading logs).
-            grep -E "error:|Error" package.log | sort -u | head -20 | while IFS= read -r line; do echo "::error::$line"; done
+            { grep -E "error:" package.log | sort -u | head -10; tail -15 package.log; } | while IFS= read -r line; do echo "::error::$line"; done
             exit $status
           fi
           echo "ZIP=dist/Laminat-$VERSION.zip" >> "$GITHUB_ENV"
