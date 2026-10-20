@@ -8,6 +8,11 @@ final class GridViewController: NSViewController {
     var details: String? { didSet { if isViewLoaded { updateStatus() } } }
 
     private var currentView: TableSession.View
+    /// Sort and filters currently applied (not just typed).
+    var appliedSpec: ViewSpec { currentView.spec }
+    var appliedRowCount: Int { currentView.rowCount }
+    /// Called after a new sort / filter has been applied.
+    var onViewChange: (() -> Void)?
     private var spec = ViewSpec()
 
     // Page cache (main thread only).
@@ -308,6 +313,7 @@ final class GridViewController: NSViewController {
                 tableView.reloadData()
                 tableView.scrollRowToVisible(0)
                 requestVisiblePages()
+                onViewChange?()
             case .failure(let error):
                 guard requested == spec else { return }
                 errorText = error.localizedDescription

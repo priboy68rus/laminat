@@ -208,14 +208,19 @@ final class TableSession {
         }
     }
 
+    /// SQL conditions (joined with AND) for the "contains" filters of `spec`.
+    static func filterConditions(_ spec: ViewSpec, columns: [ParquetColumn]) -> [String] {
+        spec.activeFilters.sorted { $0.key < $1.key }.map { column, text in
+            "contains(lower(\(ParquetFile.textExpression(columns[column]))), \(SQL.string(text.lowercased())))"
+        }
+    }
+
     private func buildView(_ spec: ViewSpec, id: Int) throws -> View {
         guard !spec.isIdentity else {
             return View(id: id, spec: spec, indexTable: nil, rowCount: totalRows)
         }
 
-        let conditions = spec.activeFilters.sorted { $0.key < $1.key }.map { column, text in
-            "contains(lower(\(ParquetFile.textExpression(columns[column]))), \(SQL.string(text.lowercased())))"
-        }
+        let conditions = Self.filterConditions(spec, columns: columns)
         var sql = "SELECT \(source.rowID) AS r FROM \(source.expression)"
         if !conditions.isEmpty { sql += " WHERE " + conditions.joined(separator: " AND ") }
         if let sort = spec.sort {

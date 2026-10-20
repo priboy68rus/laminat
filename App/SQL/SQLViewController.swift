@@ -183,6 +183,13 @@ final class SQLViewController: NSViewController {
         workspace.cancelSQL()
     }
 
+    /// Replaces the editor text (undoably) and optionally runs it.
+    func setQuery(_ sql: String, run: Bool) {
+        _ = view  // make sure the editor exists
+        replaceText(with: sql)
+        if run { runQuery(nil) }
+    }
+
     /// ⌘T: pop up the templates menu.
     @objc func showTemplates(_ sender: Any?) {
         templatesButton.performClick(nil)

@@ -53,6 +53,7 @@ enum MainMenu {
         main.addSubmenu("View", [
             item("Data", #selector(DocumentViewController.showData(_:)), "1"),
             item("SQL", #selector(DocumentViewController.showSQL(_:)), "2"),
+            item("Statistics", #selector(DocumentViewController.showStats(_:)), "3"),
             .separator(),
             item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]),
         ])

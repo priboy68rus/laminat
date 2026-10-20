@@ -17,7 +17,7 @@ final class ParquetDocument: NSDocument {
 }
 
 final class ViewerWindowController: NSWindowController, NSToolbarDelegate {
-    private let modeControl = NSSegmentedControl(labels: ["Data", "SQL"], trackingMode: .selectOne, target: nil, action: nil)
+    private let modeControl = NSSegmentedControl(labels: ["Data", "SQL", "Stats"], trackingMode: .selectOne, target: nil, action: nil)
     private let documentController: DocumentViewController
     private static let modeItem = NSToolbarItem.Identifier("mode")
 
@@ -42,6 +42,7 @@ final class ViewerWindowController: NSWindowController, NSToolbarDelegate {
         modeControl.action = #selector(modeChanged(_:))
         modeControl.setToolTip("Data (⌘1)", forSegment: 0)
         modeControl.setToolTip("SQL (⌘2)", forSegment: 1)
+        modeControl.setToolTip("Statistics (⌘3)", forSegment: 2)
         documentController.onModeChange = { [weak self] mode in self?.modeControl.selectedSegment = mode.rawValue }
 
         let toolbar = NSToolbar(identifier: "viewer")
@@ -76,7 +77,7 @@ final class ViewerWindowController: NSWindowController, NSToolbarDelegate {
 
 /// Window content: switches between the data grid and the SQL editor.
 final class DocumentViewController: NSViewController {
-    enum Mode: Int { case data, sql }
+    enum Mode: Int { case data, sql, stats }
 
     let workspace: Workspace
     var onModeChange: ((Mode) -> Void)?
@@ -86,6 +87,16 @@ final class DocumentViewController: NSViewController {
         session: workspace.fileSession,
         details: ByteCountFormatter.string(fromByteCount: workspace.summary.fileSize, countStyle: .file))
     private lazy var sqlController = SQLViewController(workspace: workspace)
+    private lazy var statsController: StatsViewController = {
+        let controller = StatsViewController(workspace: workspace)
+        controller.dataView = { [unowned self] in (dataGrid.appliedSpec, dataGrid.appliedRowCount) }
+        controller.onOpenSQL = { [unowned self] sql in
+            mode = .sql
+            sqlController.setQuery(sql, run: true)
+        }
+        dataGrid.onViewChange = { [weak controller] in controller?.dataViewChanged() }
+        return controller
+    }()
 
     init(workspace: Workspace) {
         self.workspace = workspace
@@ -100,7 +111,11 @@ final class DocumentViewController: NSViewController {
     }
 
     private func showMode() {
-        let next: NSViewController = mode == .data ? dataGrid : sqlController
+        let next: NSViewController = switch mode {
+        case .data: dataGrid
+        case .sql: sqlController
+        case .stats: statsController
+        }
         children.forEach { child in
             child.view.removeFromSuperview()
             child.removeFromParent()
@@ -109,12 +124,13 @@ final class DocumentViewController: NSViewController {
         next.view.frame = view.bounds
         next.view.autoresizingMask = [.width, .height]
         view.addSubview(next.view)
-        view.window?.makeFirstResponder(mode == .sql ? nil : next.view)
+        if mode == .data { view.window?.makeFirstResponder(next.view) }
         onModeChange?(mode)
     }
 
     @objc func showData(_ sender: Any?) { mode = .data }
     @objc func showSQL(_ sender: Any?) { mode = .sql }
+    @objc func showStats(_ sender: Any?) { mode = .stats }
 
     /// Query menu commands work from either mode: they switch to SQL first.
     @objc func runQuery(_ sender: Any?) {
@@ -135,6 +151,7 @@ extension DocumentViewController: NSMenuItemValidation {
         switch item.action {
         case #selector(showData(_:)): item.state = mode == .data ? .on : .off
         case #selector(showSQL(_:)): item.state = mode == .sql ? .on : .off
+        case #selector(showStats(_:)): item.state = mode == .stats ? .on : .off
         case #selector(runQuery(_:)), #selector(stopQuery(_:)): return sqlController.validateMenuItem(item)
         default: break
         }
