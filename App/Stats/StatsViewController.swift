@@ -256,7 +256,12 @@ final class StatsViewController: NSViewController {
 
     // MARK: Actions
 
-    @objc private func scopeChanged(_ sender: Any?) { recalculate(nil) }
+    /// Recalculates only when the scope actually changed (clicking the selected segment is a no-op).
+    @objc private func scopeChanged(_ sender: Any?) {
+        let wantsFilter = scopeControl.selectedSegment == 1
+        guard wantsFilter != (scopeFilter != nil) || isStale else { return }
+        recalculate(nil)
+    }
 
     @objc private func recalculate(_ sender: Any?) {
         guard let calculator else {
