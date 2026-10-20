@@ -64,7 +64,7 @@ enum QuickLookPreview {
         td.n, th.n { text-align: right; }
         td.i, th.i { color: var(--muted); text-align: right; }
         .null { color: var(--muted); opacity: .6; }
-        footer { padding: 8px 16px 14px; color: var(--muted); }
+        .partial { margin-top: 4px; color: var(--muted); font-style: italic; }
         </style></head><body>
         """
 
@@ -72,7 +72,20 @@ enum QuickLookPreview {
         out += "<header><h1>\(escape(summary.url.lastPathComponent))</h1><div class=\"meta\">"
         out += "\(format(summary.rowCount)) rows · \(summary.columns.count) columns · \(size)"
         out += " · \(format(summary.rowGroupCount)) row group\(summary.rowGroupCount == 1 ? "" : "s")"
-        out += "</div></header>"
+        out += "</div>"
+
+        // Say up front that the table below is partial.
+        var notes: [String] = []
+        if Int64(rows.count) < summary.rowCount {
+            notes.append("first \(format(Int64(rows.count))) of \(format(summary.rowCount)) rows")
+        }
+        if columns.count < summary.columns.count {
+            notes.append("first \(columns.count) of \(summary.columns.count) columns")
+        }
+        if !notes.isEmpty {
+            out += "<div class=\"partial\">Showing \(notes.joined(separator: ", "))</div>"
+        }
+        out += "</header>"
 
         out += "<table><thead><tr><th class=\"i\">#</th>"
         for column in columns {
@@ -93,19 +106,7 @@ enum QuickLookPreview {
             }
             out += "</tr>"
         }
-        out += "</tbody></table>"
-
-        var notes: [String] = []
-        if Int64(rows.count) < summary.rowCount {
-            notes.append("first \(format(Int64(rows.count))) of \(format(summary.rowCount)) rows")
-        }
-        if columns.count < summary.columns.count {
-            notes.append("first \(columns.count) of \(summary.columns.count) columns")
-        }
-        if !notes.isEmpty {
-            out += "<footer>Showing \(notes.joined(separator: ", "))</footer>"
-        }
-        out += "</body></html>"
+        out += "</tbody></table></body></html>"
         return out
     }
 
