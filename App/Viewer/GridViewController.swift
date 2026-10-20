@@ -25,6 +25,7 @@ final class GridViewController: NSViewController {
     private let header = FilterHeaderView(frame: .zero)
     private let statusLabel = NSTextField(labelWithString: "")
     private let spinner = NSProgressIndicator()
+    private let overlay = ProgressOverlay(frame: .zero)
 
     private var buildStartedAt: Date?
     private var lastBuildDuration: TimeInterval?
@@ -98,6 +99,7 @@ final class GridViewController: NSViewController {
             statusLabel.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -5),
         ])
 
+        overlay.install(in: root, over: scrollView.contentView)  // header with filters stays usable
         view = root
 
         scrollView.contentView.postsBoundsChangedNotifications = true
@@ -283,6 +285,7 @@ final class GridViewController: NSViewController {
         buildStartedAt = Date()
         errorText = nil
         spinner.startAnimation(nil)
+        overlay.start(requested.sort != currentView.spec.sort ? "Sorting…" : "Filtering…")
         updateStatus()
 
         session.makeView(requested) { [weak self] result in
@@ -317,6 +320,7 @@ final class GridViewController: NSViewController {
     private func finishBuild() {
         buildStartedAt = nil
         spinner.stopAnimation(nil)
+        overlay.stop()
     }
 
     // MARK: Status bar

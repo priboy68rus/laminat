@@ -15,6 +15,7 @@ final class SQLViewController: NSViewController {
     private let spinner = NSProgressIndicator()
     private let statusLabel = NSTextField(labelWithString: "")
     private let resultsContainer = NSView()
+    private let overlay = ProgressOverlay(frame: .zero)
 
     private var resultGrid: GridViewController?
     private var currentResult: Workspace.SQLResult?
@@ -50,6 +51,8 @@ final class SQLViewController: NSViewController {
             editorScroll.bottomAnchor.constraint(equalTo: editorPane.bottomAnchor),
         ])
 
+        overlay.install(in: resultsContainer)
+        overlay.onCancel = { [weak self] in self?.stopQuery(nil) }
         showPlaceholder("Press ⌘↩ to run the query. The file is available as \(workspace.tableNameForSQL) and as \(Workspace.alias).")
 
         split.isVertical = false
@@ -154,13 +157,20 @@ final class SQLViewController: NSViewController {
         isRunning = true
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.stringValue = "Running…"
+        overlay.start("Executing query…")
+        let startedAt = Date()
         workspace.runSQL(text) { [weak self] result in
             guard let self else { return }
             isRunning = false
+            overlay.stop()
             switch result {
             case .success(let sqlResult):
                 remember(text)
                 show(sqlResult)
+            case .failure(let error) where error.localizedDescription.localizedCaseInsensitiveContains("interrupt"):
+                // Cancelled by the user: keep the previous result on screen.
+                statusLabel.textColor = .secondaryLabelColor
+                statusLabel.stringValue = String(format: "Cancelled after %.1f s", Date().timeIntervalSince(startedAt))
             case .failure(let error):
                 statusLabel.textColor = .systemRed
                 statusLabel.stringValue = "Error"
@@ -285,11 +295,11 @@ final class SQLViewController: NSViewController {
 
     private func setResultView(_ newView: NSView, controller: GridViewController?) {
         resultGrid?.removeFromParent()
-        resultsContainer.subviews.forEach { $0.removeFromSuperview() }
+        resultsContainer.subviews.filter { $0 !== overlay }.forEach { $0.removeFromSuperview() }
         resultGrid = controller
         if let controller { addChild(controller) }
         newView.translatesAutoresizingMaskIntoConstraints = false
-        resultsContainer.addSubview(newView)
+        resultsContainer.addSubview(newView, positioned: .below, relativeTo: overlay)
         NSLayoutConstraint.activate([
             newView.topAnchor.constraint(equalTo: resultsContainer.topAnchor),
             newView.leadingAnchor.constraint(equalTo: resultsContainer.leadingAnchor),
