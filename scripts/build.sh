@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Build Laminat, install it to ~/Applications and register the Quick Look extension.
+# Build Laminat, install it to /Applications (replacing any release copy) and register the Quick Look extension.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 command -v xcodegen >/dev/null || { echo "xcodegen not found: brew install xcodegen"; exit 1; }
+
+./scripts/fetch-duckdb.sh
 
 xcodegen generate --quiet
 
@@ -16,9 +18,9 @@ xcodebuild \
   -quiet build
 
 APP_SRC="build/Build/Products/Debug/Laminat.app"
-APP_DST="$HOME/Applications/Laminat.app"
+APP_DST="/Applications/Laminat.app"
 
-mkdir -p "$HOME/Applications"
+
 rm -rf "$APP_DST"
 cp -R "$APP_SRC" "$APP_DST"
 

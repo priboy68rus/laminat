@@ -8,3 +8,5 @@ App/Info.plist
 QuickLook/Info.plist
 QuickLook/*.entitlements
 dist/
+# Fetched by scripts/fetch-duckdb.sh
+Vendor/duckdb/

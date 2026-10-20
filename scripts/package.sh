@@ -8,6 +8,8 @@ VERSION="${1:-dev}"
 
 command -v xcodegen >/dev/null || { echo "xcodegen not found: brew install xcodegen"; exit 1; }
 
+./scripts/fetch-duckdb.sh
+
 xcodegen generate --quiet
 
 xcodebuild \
@@ -23,7 +25,8 @@ xcodebuild \
 
 APP="build/Build/Products/Release/Laminat.app"
 
-# Re-sign inside-out so the extension and the app have consistent ad-hoc signatures.
+# Re-sign inside-out so the dylib, the extension and the app have consistent ad-hoc signatures.
+codesign --force --sign - "$APP/Contents/Frameworks/libduckdb.dylib"
 codesign --force --sign - --entitlements QuickLook/LaminatQuickLook.entitlements \
   "$APP/Contents/PlugIns/LaminatQuickLook.appex"
 codesign --force --sign - "$APP"

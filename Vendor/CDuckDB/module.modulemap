@@ -1,0 +1,5 @@
+module CDuckDB [system] {
+    header "../duckdb/duckdb.h"
+    link "duckdb"
+    export *
+}
