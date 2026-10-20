@@ -30,11 +30,11 @@ LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchSe
 # only ever uses the installed copy.
 for built in build/Build/Products/*/Laminat.app; do
   [[ -d "$built" ]] || continue
-  pluginkit -r "$built/Contents/PlugIns/LaminatQuickLook.appex" 2>/dev/null || true
+  for appex in "$built"/Contents/PlugIns/*.appex; do pluginkit -r "$appex" 2>/dev/null || true; done
   "$LSREGISTER" -u "$built" 2>/dev/null || true
 done
 "$LSREGISTER" -f "$APP_DST"
-pluginkit -a "$APP_DST/Contents/PlugIns/LaminatQuickLook.appex" || true
+for appex in "$APP_DST"/Contents/PlugIns/*.appex; do pluginkit -a "$appex" || true; done
 qlmanage -r >/dev/null 2>&1 || true
 qlmanage -r cache >/dev/null 2>&1 || true
 
@@ -44,7 +44,9 @@ echo "Signature:"
 codesign -dv "$APP_DST" 2>&1 | grep -E "Identifier|Signature" || true
 echo
 echo "Quick Look extension registration:"
-pluginkit -mAvvv -p com.apple.quicklook.preview 2>/dev/null | grep -i -A3 laminat || echo "  (not listed yet)"
+for point in com.apple.quicklook.preview com.apple.quicklook.thumbnail com.apple.spotlight.import; do
+  pluginkit -mAvvv -p "$point" 2>/dev/null | grep -i -A1 "laminat" | grep -E "laminat|Path" || echo "  $point: (not listed yet)"
+done
 echo
 echo "Content type of the sample file:"
 mdls -name kMDItemContentType samples/sample.parquet || true

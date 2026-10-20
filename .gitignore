@@ -7,6 +7,10 @@ xcuserdata/
 App/Info.plist
 QuickLook/Info.plist
 QuickLook/*.entitlements
+Thumbnail/Info.plist
+Thumbnail/*.entitlements
+Spotlight/Info.plist
+Spotlight/*.entitlements
 dist/
 # Fetched by scripts/fetch-duckdb.sh
 Vendor/duckdb/

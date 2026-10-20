@@ -40,8 +40,9 @@ targets:
         NSPrincipalClass: NSApplication
         LSApplicationCategoryType: public.app-category.developer-tools
         NSHumanReadableCopyright: ""
-        # .parquet has no system UTI, so the host app declares one.
-        UTImportedTypeDeclarations:
+        # .parquet has no system UTI, so the app declares (exports) one. Exported rather than imported:
+        # Spotlight only runs an app's import extension for types the app owns.
+        UTExportedTypeDeclarations:
           - UTTypeIdentifier: org.apache.parquet
             UTTypeDescription: Apache Parquet file
             UTTypeConformsTo: [public.data]
@@ -57,6 +58,10 @@ targets:
     dependencies:
       - target: LaminatQuickLook
         embed: true
+      - target: LaminatThumbnail
+        embed: true
+      # LaminatSpotlight is built but not embedded yet: Spotlight never invokes it for real indexing
+      # (see docs/SPEC.md §1.3).
       - framework: Vendor/duckdb/libduckdb.dylib
         embed: true
         codeSign: true
@@ -94,6 +99,73 @@ targets:
         com.apple.security.files.user-selected.read-only: true
     dependencies:
       - sdk: QuickLookUI.framework
+      - framework: Vendor/duckdb/libduckdb.dylib
+        embed: false
+
+  LaminatThumbnail:
+    type: app-extension
+    platform: macOS
+    sources:
+      - Thumbnail
+      - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.priboy68rus.laminat.Thumbnail
+        GENERATE_INFOPLIST_FILE: NO
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../../../../Frameworks"
+    info:
+      path: Thumbnail/Info.plist
+      properties:
+        CFBundleDisplayName: Laminat Thumbnail
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.quicklook.thumbnail
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ThumbnailProvider
+          NSExtensionAttributes:
+            QLSupportedContentTypes:
+              - org.apache.parquet
+            QLThumbnailMinimumDimension: 16
+    entitlements:
+      path: Thumbnail/LaminatThumbnail.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-only: true
+    dependencies:
+      - sdk: QuickLookThumbnailing.framework
+      - framework: Vendor/duckdb/libduckdb.dylib
+        embed: false
+
+  LaminatSpotlight:
+    type: app-extension
+    platform: macOS
+    sources:
+      - Spotlight
+      - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.priboy68rus.laminat.Spotlight
+        GENERATE_INFOPLIST_FILE: NO
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../../../../Frameworks"
+    info:
+      path: Spotlight/Info.plist
+      properties:
+        CFBundleDisplayName: Laminat Spotlight
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.spotlight.import
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ImportExtension
+          NSExtensionAttributes:
+            CSSupportedContentTypes:
+              - org.apache.parquet
+    entitlements:
+      path: Spotlight/LaminatSpotlight.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-only: true
+    dependencies:
+      - sdk: CoreSpotlight.framework
       - framework: Vendor/duckdb/libduckdb.dylib
         embed: false
 
