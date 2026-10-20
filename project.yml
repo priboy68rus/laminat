@@ -37,6 +37,7 @@ targets:
         CFBundleDisplayName: Laminat
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSPrincipalClass: NSApplication
         LSApplicationCategoryType: public.app-category.developer-tools
         NSHumanReadableCopyright: ""
         # .parquet has no system UTI, so the host app declares one.
@@ -50,8 +51,9 @@ targets:
         CFBundleDocumentTypes:
           - CFBundleTypeName: Apache Parquet file
             CFBundleTypeRole: Viewer
-            LSHandlerRank: Alternate
+            LSHandlerRank: Default
             LSItemContentTypes: [org.apache.parquet]
+            NSDocumentClass: $(PRODUCT_MODULE_NAME).ParquetDocument
     dependencies:
       - target: LaminatQuickLook
         embed: true

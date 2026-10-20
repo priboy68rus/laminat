@@ -41,6 +41,23 @@ struct ParquetFile {
 
     private var source: String { "read_parquet(\(SQL.string(url.path)))" }
 
+    /// SQL turning a column into its display string: at most `maxChars` characters plus one (so the
+    /// formatter can tell a value was cut); binary columns become their byte length.
+    static func displayExpression(_ column: ParquetColumn, maxChars: Int) -> String {
+        let ref = SQL.identifier(column.name)
+        switch column.kind {
+        case .binary: return "octet_length(\(ref))::VARCHAR"
+        case .nested: return "left(to_json(\(ref))::VARCHAR, \(maxChars + 1))"
+        default: return "left(\(ref)::VARCHAR, \(maxChars + 1))"
+        }
+    }
+
+    /// SQL for the text a "contains" filter matches against: the full value, nested types as JSON.
+    static func textExpression(_ column: ParquetColumn) -> String {
+        let ref = SQL.identifier(column.name)
+        return column.kind == .nested ? "to_json(\(ref))::VARCHAR" : "\(ref)::VARCHAR"
+    }
+
     /// Footer-only: schema, row count and row groups, without touching the data pages.
     func summary() throws -> ParquetSummary {
         let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
@@ -68,14 +85,7 @@ struct ParquetFile {
     /// (plus one, so the formatter can tell that a value was cut). Binary columns return their byte length.
     func head(columns: [ParquetColumn], limit: Int, maxChars: Int) throws -> [[String?]] {
         guard !columns.isEmpty else { return [] }
-        let projection = columns.map { column -> String in
-            let ref = SQL.identifier(column.name)
-            switch column.kind {
-            case .binary: return "octet_length(\(ref))::VARCHAR"
-            case .nested: return "left(to_json(\(ref))::VARCHAR, \(maxChars + 1))"
-            default: return "left(\(ref)::VARCHAR, \(maxChars + 1))"
-            }
-        }.joined(separator: ", ")
+        let projection = columns.map { Self.displayExpression($0, maxChars: maxChars) }.joined(separator: ", ")
         return try connection.query("SELECT \(projection) FROM \(source) LIMIT \(limit)").readStrings()
     }
 }
