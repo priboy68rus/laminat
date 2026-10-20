@@ -13,7 +13,7 @@ brew install xcodegen
 ./scripts/build.sh
 ```
 
-The script downloads the pinned DuckDB library (`scripts/fetch-duckdb.sh`), generates the Xcode project, builds it, installs `Laminat.app` to `/Applications` (replacing a downloaded release) and registers the Quick Look extension.
+The script builds the Release configuration (so performance matches what users get), downloads the pinned DuckDB library (`scripts/fetch-duckdb.sh`), generates the Xcode project, builds it, installs `Laminat.app` to `/Applications` (replacing a downloaded release) and registers the Quick Look extension.
 
 ## Test
 

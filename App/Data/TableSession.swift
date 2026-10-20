@@ -104,16 +104,20 @@ final class TableSession {
     // MARK: Pages
 
     /// Loads `columns` of page `page` of `view`. Only visible columns are requested: decoding wide or
-    /// heavy columns nobody looks at is what makes pages slow. `isWanted` is checked on the page queue
-    /// right before the query, so pages the user has scrolled past are skipped instead of queueing up.
-    func loadPage(_ page: Int, columns wanted: [Int], of view: View, isWanted: @escaping () -> Bool,
+    /// heavy columns nobody looks at is what makes pages slow. Right before the query `stillWanted`
+    /// narrows the request to the columns that are still on screen (empty = skip the page), so a fast
+    /// scroll doesn't leave a backlog of reads for columns and rows the user has already passed.
+    /// The completion gets nil for a skipped request.
+    func loadPage(_ page: Int, columns requested: [Int], of view: View,
+                  stillWanted: @escaping ([Int]) -> [Int],
                   completion: @escaping (Result<PageColumns, Error>?) -> Void) {
         pageQueue.async { [self] in
-            guard isWanted() else {
+            let columns = stillWanted(requested)
+            guard !columns.isEmpty else {
                 DispatchQueue.main.async { completion(nil) }
                 return
             }
-            let result = Result { try fetchPage(page, columns: wanted, of: view) }
+            let result = Result { try fetchPage(page, columns: columns, of: view) }
             DispatchQueue.main.async { completion(result) }
         }
     }

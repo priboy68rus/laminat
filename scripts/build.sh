@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build Laminat, install it to /Applications (replacing any release copy) and register the Quick Look extension.
+# Build Laminat (Release, so performance is representative), install it to /Applications (replacing any release copy) and register the Quick Look extension.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -12,12 +12,12 @@ xcodegen generate --quiet
 xcodebuild \
   -project Laminat.xcodeproj \
   -scheme Laminat \
-  -configuration Debug \
+  -configuration Release \
   -derivedDataPath build \
   CODE_SIGN_IDENTITY=- \
   -quiet build
 
-APP_SRC="build/Build/Products/Debug/Laminat.app"
+APP_SRC="build/Build/Products/Release/Laminat.app"
 APP_DST="/Applications/Laminat.app"
 
 

@@ -26,7 +26,7 @@ final class GridViewController: NSViewController {
 
     // Pages the user can currently see (± one page), read from the page queue.
     private let wantedLock = NSLock()
-    private var wanted: (viewID: Int, pages: ClosedRange<Int>) = (0, 0...0)
+    private var wanted: (viewID: Int, pages: ClosedRange<Int>, columns: Set<Int>) = (0, 0...0, [])
 
     private let scrollView = NSScrollView()
     private let tableView = NSTableView()
@@ -203,11 +203,10 @@ final class GridViewController: NSViewController {
         guard firstPage <= lastPage else { return }
 
         let wantedRange = max(0, firstPage - 1)...min(pageCount(for: currentView) - 1, lastPage + 1)
-        wantedLock.lock()
-        wanted = (currentView.id, wantedRange)
-        wantedLock.unlock()
-
         let columns = visibleDataColumns()
+        wantedLock.lock()
+        wanted = (currentView.id, wantedRange, Set(columns))
+        wantedLock.unlock()
         guard !columns.isEmpty else { return }
         // Visible pages first, then the neighbours.
         let order = Array(firstPage...lastPage) + wantedRange.filter { $0 < firstPage || $0 > lastPage }
@@ -224,11 +223,19 @@ final class GridViewController: NSViewController {
         return wanted.viewID == viewID && wanted.pages.contains(page)
     }
 
+    /// Called on the page queue: the requested columns of `page` that are still on screen.
+    private func stillWanted(_ page: Int, _ columns: [Int], viewID: Int) -> [Int] {
+        wantedLock.lock()
+        defer { wantedLock.unlock() }
+        guard wanted.viewID == viewID, wanted.pages.contains(page) else { return [] }
+        return columns.filter(wanted.columns.contains)
+    }
+
     private func load(_ page: Int, columns: [Int]) {
         loading[page, default: []].formUnion(columns)
         let view = currentView
-        session.loadPage(page, columns: columns, of: view, isWanted: { [weak self] in
-            self?.isWanted(page, viewID: view.id) ?? false
+        session.loadPage(page, columns: columns, of: view, stillWanted: { [weak self] requested in
+            self?.stillWanted(page, requested, viewID: view.id) ?? []
         }) { [weak self] result in
             guard let self, view.id == self.currentView.id else { return }
             loading[page]?.subtract(columns)
@@ -238,11 +245,14 @@ final class GridViewController: NSViewController {
                 break  // skipped: scrolled away before the page was read
             case .success(let data):
                 store(page, data)
-                reload(page: page, columns: columns)
+                reload(page: page, columns: Array(data.keys))
             case .failure(let error):
                 errorText = error.localizedDescription
                 updateStatus()
+                return  // don't retry in a loop
             }
+            // Columns dropped from this request (scrolled away and back) are requested again.
+            requestVisiblePages()
         }
     }
 
@@ -509,6 +519,11 @@ extension GridViewController: NSTableViewDataSource, NSTableViewDelegate {
             cell.style = .null
         }
         return cell
+    }
+
+    /// Cells draw into their row's single layer instead of each owning a backing store.
+    func tableView(_ tableView: NSTableView, didAdd rowView: NSTableRowView, forRow row: Int) {
+        rowView.canDrawSubviewsIntoLayer = true
     }
 
     func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {

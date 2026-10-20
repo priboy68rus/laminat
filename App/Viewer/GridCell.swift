@@ -35,27 +35,43 @@ final class GridCell: NSView {
     private static let rowNumberParagraph = paragraph(.right, .byTruncatingHead)
     private static let lineHeight = ceil(font.ascender - font.descender + font.leading)
 
+    /// Text attributes per (style, selected), built once instead of on every draw.
+    private static let attributeCache: [Style: [Bool: [NSAttributedString.Key: Any]]] = {
+        var cache: [Style: [Bool: [NSAttributedString.Key: Any]]] = [:]
+        for style in [Style.value, .number, .null, .rowNumber, .placeholder] {
+            for selected in [false, true] {
+                let color: NSColor = switch style {
+                case .value, .number: selected ? .alternateSelectedControlTextColor : .labelColor
+                case .null, .placeholder: selected ? .alternateSelectedControlTextColor.withAlphaComponent(0.6) : .tertiaryLabelColor
+                case .rowNumber: selected ? .alternateSelectedControlTextColor.withAlphaComponent(0.8) : .secondaryLabelColor
+                }
+                let paragraph = switch style {
+                case .number: numberParagraph
+                case .rowNumber: rowNumberParagraph
+                default: leftParagraph
+                }
+                cache[style, default: [:]][selected] = [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]
+            }
+        }
+        return cache
+    }()
+
+    private static let exponentAttributes: [Bool: [NSAttributedString.Key: Any]] = {
+        var result: [Bool: [NSAttributedString.Key: Any]] = [:]
+        for selected in [false, true] {
+            var attributes = attributeCache[.number]![selected]!
+            attributes[.paragraphStyle] = exponentParagraph
+            result[selected] = attributes
+        }
+        return result
+    }()
+
     override func draw(_ dirtyRect: NSRect) {
         guard !text.isEmpty else { return }
         let selected = backgroundStyle == .emphasized
-
-        let color: NSColor
-        switch style {
-        case .value, .number: color = selected ? .alternateSelectedControlTextColor : .labelColor
-        case .null, .placeholder: color = selected ? .alternateSelectedControlTextColor.withAlphaComponent(0.6) : .tertiaryLabelColor
-        case .rowNumber: color = selected ? .alternateSelectedControlTextColor.withAlphaComponent(0.8) : .secondaryLabelColor
-        }
-        let paragraph = switch style {
-        case .number: text.contains("e") ? Self.exponentParagraph : Self.numberParagraph
-        case .rowNumber: Self.rowNumberParagraph
-        default: Self.leftParagraph
-        }
-
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: Self.font,
-            .foregroundColor: color,
-            .paragraphStyle: paragraph,
-        ]
+        let attributes = style == .number && text.contains("e")
+            ? Self.exponentAttributes[selected]!
+            : Self.attributeCache[style]![selected]!
         let rect = NSRect(x: Self.horizontalPadding,
                           y: floor((bounds.height - Self.lineHeight) / 2),
                           width: bounds.width - Self.horizontalPadding * 2,

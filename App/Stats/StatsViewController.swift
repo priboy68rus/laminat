@@ -483,6 +483,10 @@ extension StatsViewController: NSTableViewDataSource, NSTableViewDelegate {
         applyOrder()
     }
 
+    func tableView(_ tableView: NSTableView, didAdd rowView: NSTableRowView, forRow row: Int) {
+        rowView.canDrawSubviewsIntoLayer = true
+    }
+
     func tableViewSelectionDidChange(_ notification: Notification) {
         refreshDetails()
     }
