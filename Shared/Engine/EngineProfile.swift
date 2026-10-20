@@ -21,7 +21,10 @@ enum EngineProfile {
         case .previewExtension:
             common += [("threads", "1"), ("memory_limit", "512MB")]
         case .app:
-            break
+            // DuckDB defaults to 80 % of RAM; sorting 30M rows peaks at several GB. Half is plenty
+            // (bigger operations spill to the temp directory) and leaves room for everything else.
+            let halfOfRAM = ProcessInfo.processInfo.physicalMemory / 2 / 1_048_576
+            common += [("memory_limit", "\(halfOfRAM)MB")]
         }
         // Developer override for experiments: LAMINAT_DUCKDB_SETTINGS="name=value,name=value".
         if let extra = ProcessInfo.processInfo.environment["LAMINAT_DUCKDB_SETTINGS"] {

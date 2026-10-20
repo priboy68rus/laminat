@@ -15,11 +15,14 @@ final class GridViewController: NSViewController {
     var onViewChange: (() -> Void)?
     private var spec = ViewSpec()
 
-    // Page cache (main thread only).
-    private var pages: [Int: [[String?]]] = [:]
-    private var pageOrder: [Int] = []
-    private var loading: Set<Int> = []
-    private let maxCachedPages: Int
+    // Cache (main thread only): page → the columns loaded for it. Only visible columns (plus a
+    // margin) are fetched; the rest come in as the user scrolls sideways.
+    private var pages: [Int: TableSession.PageColumns] = [:]
+    private var pageOrder: [Int] = []           // least recently used first
+    private var loading: [Int: Set<Int>] = [:]  // page → columns being fetched
+    private var cachedCells = 0
+    private static let maxCachedCells = 5_000_000
+    private static let columnMargin = 2
 
     // Pages the user can currently see (± one page), read from the page queue.
     private let wantedLock = NSLock()
@@ -47,8 +50,6 @@ final class GridViewController: NSViewController {
         self.session = session
         self.details = details
         self.currentView = session.identityView
-        // Keep roughly 5M cells cached regardless of how wide the file is.
-        maxCachedPages = max(8, 5_000_000 / max(1, session.pageSize * max(1, session.columns.count)))
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -178,16 +179,27 @@ final class GridViewController: NSViewController {
     }
 
     private func pageCount(for view: TableSession.View) -> Int {
-        (view.rowCount + session.pageSize - 1) / session.pageSize
+        (view.rowCount + view.pageSize - 1) / view.pageSize
+    }
+
+    /// Data columns on screen, plus a small margin on each side.
+    private func visibleDataColumns() -> [Int] {
+        let onScreen = tableView.columnIndexes(in: tableView.visibleRect)
+        guard let first = onScreen.first, let last = onScreen.last else { return [] }
+        let low = max(1, first - Self.columnMargin)
+        let high = min(tableView.numberOfColumns - 1, last + Self.columnMargin)
+        guard low <= high else { return [] }
+        return (low...high).map { $0 - 1 }  // table column 0 is the row number
     }
 
     private func requestVisiblePages() {
         guard currentView.rowCount > 0 else { return }
+        let pageSize = currentView.pageSize
         let visible = tableView.rows(in: tableView.visibleRect)
         let firstRow = max(0, visible.location)
         let lastRow = max(firstRow, visible.location + max(visible.length, 1) - 1)
-        let firstPage = firstRow / session.pageSize
-        let lastPage = min(pageCount(for: currentView) - 1, lastRow / session.pageSize)
+        let firstPage = firstRow / pageSize
+        let lastPage = min(pageCount(for: currentView) - 1, lastRow / pageSize)
         guard firstPage <= lastPage else { return }
 
         let wantedRange = max(0, firstPage - 1)...min(pageCount(for: currentView) - 1, lastPage + 1)
@@ -195,10 +207,14 @@ final class GridViewController: NSViewController {
         wanted = (currentView.id, wantedRange)
         wantedLock.unlock()
 
+        let columns = visibleDataColumns()
+        guard !columns.isEmpty else { return }
         // Visible pages first, then the neighbours.
         let order = Array(firstPage...lastPage) + wantedRange.filter { $0 < firstPage || $0 > lastPage }
-        for page in order where pages[page] == nil && !loading.contains(page) {
-            load(page)
+        for page in order {
+            let have = Set(pages[page].map { Array($0.keys) } ?? []).union(loading[page] ?? [])
+            let missing = columns.filter { !have.contains($0) }
+            if !missing.isEmpty { load(page, columns: missing) }
         }
     }
 
@@ -208,20 +224,21 @@ final class GridViewController: NSViewController {
         return wanted.viewID == viewID && wanted.pages.contains(page)
     }
 
-    private func load(_ page: Int) {
-        loading.insert(page)
+    private func load(_ page: Int, columns: [Int]) {
+        loading[page, default: []].formUnion(columns)
         let view = currentView
-        session.loadPage(page, of: view, isWanted: { [weak self] in
+        session.loadPage(page, columns: columns, of: view, isWanted: { [weak self] in
             self?.isWanted(page, viewID: view.id) ?? false
         }) { [weak self] result in
             guard let self, view.id == self.currentView.id else { return }
-            loading.remove(page)
+            loading[page]?.subtract(columns)
+            if loading[page]?.isEmpty == true { loading[page] = nil }
             switch result {
             case nil:
                 break  // skipped: scrolled away before the page was read
-            case .success(let rows):
-                store(page, rows: rows)
-                reload(page: page)
+            case .success(let data):
+                store(page, data)
+                reload(page: page, columns: columns)
             case .failure(let error):
                 errorText = error.localizedDescription
                 updateStatus()
@@ -229,30 +246,40 @@ final class GridViewController: NSViewController {
         }
     }
 
-    private func store(_ page: Int, rows: [[String?]]) {
-        pages[page] = rows
+    private func store(_ page: Int, _ data: TableSession.PageColumns) {
+        var entry = pages[page] ?? [:]
+        for (column, values) in data where entry[column] == nil {
+            entry[column] = values
+            cachedCells += values.count
+        }
+        pages[page] = entry
         pageOrder.removeAll { $0 == page }
         pageOrder.append(page)
-        while pageOrder.count > maxCachedPages, let victim = pageOrder.first(where: { !isWanted($0, viewID: currentView.id) }) {
+
+        while cachedCells > Self.maxCachedCells,
+              let victim = pageOrder.first(where: { !isWanted($0, viewID: currentView.id) }) {
             pageOrder.removeAll { $0 == victim }
+            cachedCells -= pages[victim]?.values.reduce(0) { $0 + $1.count } ?? 0
             pages[victim] = nil
         }
     }
 
-    private func reload(page: Int) {
-        let pageRows = (page * session.pageSize)..<min(currentView.rowCount, (page + 1) * session.pageSize)
+    private func reload(page: Int, columns: [Int]) {
+        let pageSize = currentView.pageSize
+        let pageRows = (page * pageSize)..<min(currentView.rowCount, (page + 1) * pageSize)
         let visible = tableView.rows(in: tableView.visibleRect)
-        let visibleRows = visible.location..<(visible.location + visible.length)
-        let rows = pageRows.clamped(to: visibleRows)
+        let rows = pageRows.clamped(to: visible.location..<(visible.location + visible.length))
         guard !rows.isEmpty else { return }
         tableView.reloadData(forRowIndexes: IndexSet(integersIn: rows),
-                             columnIndexes: IndexSet(integersIn: 0..<tableView.numberOfColumns))
+                             columnIndexes: IndexSet(columns.map { $0 + 1 }))
     }
 
-    private func rowValues(_ row: Int) -> [String?]? {
-        guard let page = pages[row / session.pageSize] else { return nil }
-        let offset = row % session.pageSize
-        return offset < page.count ? page[offset] : nil
+    /// The raw value of a cell: `.none` while not loaded, `.some(nil)` for NULL.
+    private func value(_ row: Int, _ column: Int) -> String?? {
+        let pageSize = currentView.pageSize
+        guard let values = pages[row / pageSize]?[column] else { return .none }
+        let offset = row % pageSize
+        return offset < values.count ? .some(values[offset]) : .none
     }
 
     // MARK: Sort & filter
@@ -308,7 +335,8 @@ final class GridViewController: NSViewController {
                 finishBuild()
                 pages = [:]
                 pageOrder = []
-                loading = []
+                loading = [:]
+                cachedCells = 0
                 tableView.deselectAll(nil)
                 tableView.reloadData()
                 tableView.scrollRowToVisible(0)
@@ -384,15 +412,23 @@ final class GridViewController: NSViewController {
 
         var lines = [session.columns.map { tsv($0.name) }.joined(separator: "\t")]
         lines.reserveCapacity(rows.count + 1)
-        var fetched: [Int: [[String?]]] = [:]
+        let pageSize = currentView.pageSize
+        let allColumns = Array(session.columns.indices)
+        var complete: [Int: TableSession.PageColumns] = [:]  // pages with every column
         for row in rows {
-            let page = row / session.pageSize
-            if pages[page] == nil, fetched[page] == nil {
-                fetched[page] = (try? session.loadPageSync(page, of: currentView)) ?? []
+            let page = row / pageSize
+            if complete[page] == nil {
+                var data = pages[page] ?? [:]
+                let missing = allColumns.filter { data[$0] == nil }
+                if !missing.isEmpty, let fetched = try? session.loadPageSync(page, columns: missing, of: currentView) {
+                    data.merge(fetched) { $1 }
+                }
+                complete[page] = data
             }
-            let values = (pages[page] ?? fetched[page])?[safe: row % session.pageSize] ?? []
-            lines.append(zip(session.columns, values).map { column, raw in
-                tsv(CellFormatter.display(raw, kind: column.kind, maxChars: TableSession.maxCellChars) ?? "")
+            let offset = row % pageSize
+            lines.append(session.columns.enumerated().map { index, column in
+                let raw = complete[page]?[index]?[safe: offset] ?? nil
+                return tsv(CellFormatter.display(raw, kind: column.kind, maxChars: TableSession.maxCellChars) ?? "")
             }.joined(separator: "\t"))
         }
         writeToPasteboard(lines.joined(separator: "\n"))
@@ -400,8 +436,7 @@ final class GridViewController: NSViewController {
 
     @objc func copyValue(_ sender: Any?) {
         let row = tableView.clickedRow, column = tableView.clickedColumn - 1
-        guard row >= 0, column >= 0, let values = rowValues(row) else { NSSound.beep(); return }
-        let raw = values[column]
+        guard row >= 0, column >= 0, case .some(let raw) = value(row, column) else { NSSound.beep(); return }
         writeToPasteboard(CellFormatter.display(raw, kind: session.columns[column].kind, maxChars: TableSession.maxCellChars) ?? "NULL")
     }
 
@@ -432,7 +467,8 @@ extension GridViewController: NSMenuItemValidation {
         case #selector(copy(_:)):
             return !tableView.selectedRowIndexes.isEmpty || tableView.clickedRow >= 0
         case #selector(copyValue(_:)):
-            return tableView.clickedRow >= 0 && tableView.clickedColumn > 0 && rowValues(tableView.clickedRow) != nil
+            return tableView.clickedRow >= 0 && tableView.clickedColumn > 0
+                && value(tableView.clickedRow, tableView.clickedColumn - 1) != nil
         case #selector(copyColumnName(_:)):
             return tableView.clickedColumn > 0
         default:
@@ -459,13 +495,13 @@ extension GridViewController: NSTableViewDataSource, NSTableViewDelegate {
         }
 
         let index = Self.dataColumnIndex(tableColumn)
-        guard index >= 0, let values = rowValues(row), index < values.count else {
+        guard index >= 0, case .some(let raw) = value(row, index) else {
             cell.text = ""
             cell.style = .placeholder
             return cell
         }
         let column = session.columns[index]
-        if let text = CellFormatter.display(values[index], kind: column.kind, maxChars: TableSession.maxCellChars) {
+        if let text = CellFormatter.display(raw, kind: column.kind, maxChars: TableSession.maxCellChars) {
             cell.text = text
             cell.style = column.kind == .number ? .number : .value
         } else {

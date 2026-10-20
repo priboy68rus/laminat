@@ -4,6 +4,7 @@ import Foundation
 //
 //   laminat-cli preview <file.parquet> [--html out.html] [--runs N]
 //   laminat-cli exec "<sql>"
+//   laminat-cli bench <file.parquet> [visible-columns]   — times grid paging (same code as the app)
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data((message + "\n").utf8))
@@ -43,6 +44,63 @@ case "exec":
         let start = Date()
         try EngineProfile.app.connect().execute(args[1])
         print("ok \(ms(Date().timeIntervalSince(start)))")
+    } catch {
+        fail("error: \(error.localizedDescription)")
+    }
+
+case "bench":
+    guard args.count >= 2 else { fail("usage: laminat-cli bench <file> [visible-columns]") }
+    do {
+        let url = URL(fileURLWithPath: args[1])
+        let database = try Database(settings: EngineProfile.app.settings)
+        let summary = try ParquetFile(url: url, connection: try Connection(database)).summary()
+        let session = try TableSession(database: database, source: .parquet(url), columns: summary.columns,
+                                       totalRows: Int(summary.rowCount))
+        let visible = Array(0..<min(args.count > 2 ? Int(args[2]) ?? 12 : 12, summary.columns.count))
+        let all = Array(summary.columns.indices)
+
+        func time(_ label: String, _ body: () throws -> Void) rethrows {
+            let start = Date()
+            try body()
+            print(String(format: "%-46@ %8.1f ms", label as NSString, Date().timeIntervalSince(start) * 1000))
+        }
+        func page(_ view: TableSession.View, _ index: Int, _ columns: [Int], _ label: String) throws {
+            try time(label) { _ = try session.loadPageSync(index, columns: columns, of: view) }
+        }
+
+        let identity = session.identityView
+        let middle = identity.rowCount / identity.pageSize / 2
+        try page(identity, middle, all, "plain page, all \(all.count) columns")
+        try page(identity, middle + 3, visible, "plain page, \(visible.count) visible columns")
+
+        // Sort by the last visible column (makeView completes on the main queue).
+        var sorted: TableSession.View?
+        var buildError: Error?
+        let start = Date()
+        session.makeView(ViewSpec(sort: .init(column: visible.last ?? 0, ascending: true))) { result in
+            switch result {
+            case .success(let view): sorted = view
+            case .failure(let error): buildError = error
+            }
+        }
+        while sorted == nil && buildError == nil { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        if let buildError { throw buildError }
+        print(String(format: "%-46@ %8.1f ms", "build sort index" as NSString, Date().timeIntervalSince(start) * 1000))
+
+        let view = sorted!
+        let sortedMiddle = view.rowCount / view.pageSize / 2
+        try page(view, sortedMiddle, all, "sorted page (\(view.pageSize) rows), all columns")
+        try page(view, sortedMiddle + 3, visible, "sorted page (\(view.pageSize) rows), visible columns")
+
+        // Resident memory once the work is done (the peak is reported by /usr/bin/time -l).
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+        _ = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        print(String(format: "%-46@ %8.0f MB", "resident memory after" as NSString, Double(info.resident_size) / 1_048_576))
     } catch {
         fail("error: \(error.localizedDescription)")
     }

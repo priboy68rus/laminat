@@ -51,7 +51,14 @@ final class TableSession {
         /// Index table name, nil for the identity view.
         let indexTable: String?
         let rowCount: Int
+
+        /// Rows per page. Fetching rows by number costs about the same for 1 000 or 5 000 of them
+        /// (the time goes into decoding the row groups they live in), so index views use bigger pages.
+        var pageSize: Int { indexTable == nil ? 1000 : 5000 }
     }
+
+    /// One page, column-major: data column index → values (display strings, nil = NULL).
+    typealias PageColumns = [Int: [String?]]
 
     let source: Source
     let columns: [ParquetColumn]
@@ -59,8 +66,6 @@ final class TableSession {
     let totalRows: Int
 
     static let maxCellChars = 300
-    /// Rows per page, smaller for wide relations so a page stays around 100k cells.
-    let pageSize: Int
 
     private let pageConnection: Connection
     private let buildConnection: Connection
@@ -82,7 +87,6 @@ final class TableSession {
         self.totalRows = totalRows
         pageConnection = try Connection(database)
         buildConnection = try Connection(database)
-        pageSize = max(100, min(1000, 100_000 / max(1, columns.count)))
     }
 
     deinit {
@@ -99,59 +103,64 @@ final class TableSession {
 
     // MARK: Pages
 
-    /// Loads page `page` of `view`. `isWanted` is checked on the page queue right before the query,
-    /// so pages the user has already scrolled past are skipped instead of queueing up.
-    func loadPage(_ page: Int, of view: View, isWanted: @escaping () -> Bool,
-                  completion: @escaping (Result<[[String?]], Error>?) -> Void) {
+    /// Loads `columns` of page `page` of `view`. Only visible columns are requested: decoding wide or
+    /// heavy columns nobody looks at is what makes pages slow. `isWanted` is checked on the page queue
+    /// right before the query, so pages the user has scrolled past are skipped instead of queueing up.
+    func loadPage(_ page: Int, columns wanted: [Int], of view: View, isWanted: @escaping () -> Bool,
+                  completion: @escaping (Result<PageColumns, Error>?) -> Void) {
         pageQueue.async { [self] in
             guard isWanted() else {
                 DispatchQueue.main.async { completion(nil) }
                 return
             }
-            let result = Result { try fetchPage(page, of: view) }
+            let result = Result { try fetchPage(page, columns: wanted, of: view) }
             DispatchQueue.main.async { completion(result) }
         }
     }
 
     /// Synchronous variant for copy: blocks the caller until the page is read.
-    func loadPageSync(_ page: Int, of view: View) throws -> [[String?]] {
-        try pageQueue.sync { try fetchPage(page, of: view) }
+    func loadPageSync(_ page: Int, columns wanted: [Int], of view: View) throws -> PageColumns {
+        try pageQueue.sync { try fetchPage(page, columns: wanted, of: view) }
     }
 
-    private func fetchPage(_ page: Int, of view: View) throws -> [[String?]] {
-        let start = page * pageSize
-        let end = min(start + pageSize, view.rowCount)
-        guard start < end, !columns.isEmpty else { return [] }
+    private func fetchPage(_ page: Int, columns wanted: [Int], of view: View) throws -> PageColumns {
+        let start = page * view.pageSize
+        let end = min(start + view.pageSize, view.rowCount)
+        guard start < end, !wanted.isEmpty else { return [:] }
 
         let rowID = source.rowID
-        let projection = (columns.map { ParquetFile.displayExpression($0, maxChars: Self.maxCellChars) }
+        let projection = (wanted.map { ParquetFile.displayExpression(columns[$0], maxChars: Self.maxCellChars) }
                           + ["\(rowID)::VARCHAR"]).joined(separator: ", ")
 
-        guard let indexTable = view.indexTable else {
-            let rows = try pageConnection.query("""
+        let rows: [[String?]]
+        if let indexTable = view.indexTable {
+            let rowIDs = try pageConnection.query("""
+                SELECT r::VARCHAR FROM \(SQL.identifier(indexTable)) WHERE rowid >= \(start) AND rowid < \(end) ORDER BY rowid
+                """).readStrings().compactMap { $0[0] }
+            guard !rowIDs.isEmpty else { return [:] }
+            let fetched = try pageConnection.query("""
+                SELECT \(projection) FROM \(source.expression) WHERE \(rowID) IN (\(rowIDs.joined(separator: ",")))
+                """).readStrings()
+            // The scan returns rows in storage order; put them back in view order.
+            var byRowID: [String: [String?]] = [:]
+            byRowID.reserveCapacity(fetched.count)
+            for row in fetched {
+                if let key = row.last ?? nil { byRowID[key] = row }
+            }
+            rows = rowIDs.map { byRowID[$0] ?? Array(repeating: nil, count: wanted.count + 1) }
+        } else {
+            rows = try pageConnection.query("""
                 SELECT \(projection) FROM \(source.expression)
                 WHERE \(rowID) >= \(start) AND \(rowID) < \(end)
                 ORDER BY \(rowID)
                 """).readStrings()
-            return rows.map { Array($0.dropLast()) }
         }
 
-        let rowIDs = try pageConnection.query("""
-            SELECT r::VARCHAR FROM \(SQL.identifier(indexTable)) WHERE rowid >= \(start) AND rowid < \(end) ORDER BY rowid
-            """).readStrings().compactMap { $0[0] }
-        guard !rowIDs.isEmpty else { return [] }
-
-        let rows = try pageConnection.query("""
-            SELECT \(projection) FROM \(source.expression) WHERE \(rowID) IN (\(rowIDs.joined(separator: ",")))
-            """).readStrings()
-
-        // The scan returns rows in storage order; put them back in view order.
-        var byRowID: [String: [String?]] = [:]
-        byRowID.reserveCapacity(rows.count)
-        for row in rows {
-            if let key = row.last ?? nil { byRowID[key] = Array(row.dropLast()) }
+        var result: PageColumns = [:]
+        for (position, column) in wanted.enumerated() {
+            result[column] = rows.map { $0[position] }
         }
-        return rowIDs.map { byRowID[$0] ?? Array(repeating: nil, count: columns.count) }
+        return result
     }
 
     // MARK: Views

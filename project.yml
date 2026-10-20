@@ -104,6 +104,7 @@ targets:
     sources:
       - CLI
       - Shared
+      - App/Data
     settings:
       base:
         PRODUCT_NAME: laminat-cli
