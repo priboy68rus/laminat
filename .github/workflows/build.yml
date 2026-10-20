@@ -1,7 +1,8 @@
-name: Release
+name: Build
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -14,13 +15,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          sw_vers
+          brew install xcodegen
 
       - name: Package
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          ./scripts/package.sh "$VERSION"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then VERSION="${GITHUB_REF_NAME#v}"; else VERSION="${GITHUB_SHA::7}"; fi
+          set +e
+          ./scripts/package.sh "$VERSION" 2>&1 | tee package.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [[ $status -ne 0 ]]; then
+            # Surface compiler errors as annotations (readable without downloading logs).
+            grep -E "error:|Error" package.log | sort -u | head -20 | while IFS= read -r line; do echo "::error::$line"; done
+            exit $status
+          fi
           echo "ZIP=dist/Laminat-$VERSION.zip" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4
