@@ -12,6 +12,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSDocumentController.shared.openDocument(nil)
         return true
     }
+
+    /// ⌘T with no window open: same as Open.
+    @objc func newWindowForTab(_ sender: Any?) {
+        NSDocumentController.shared.openDocument(sender)
+    }
 }
 
 enum MainMenu {
@@ -37,6 +42,8 @@ enum MainMenu {
         recentItem.submenu = recent
 
         main.addSubmenu("File", [
+            // ⌘T like Finder and Terminal: pick a file and open it as a new tab.
+            item("New Tab…", #selector(NSResponder.newWindowForTab(_:)), "t"),
             item("Open…", #selector(NSDocumentController.openDocument(_:)), "o"),
             recentItem,
             .separator(),
@@ -65,7 +72,7 @@ enum MainMenu {
             item("Run", #selector(DocumentViewController.runQuery(_:)), "\r"),
             item("Stop", #selector(DocumentViewController.stopQuery(_:)), "."),
             .separator(),
-            item("Insert Template…", #selector(DocumentViewController.showTemplates(_:)), "t"),
+            item("Insert Template…", #selector(DocumentViewController.showTemplates(_:)), "t", [.command, .shift]),
         ])
 
         let window = main.addSubmenu("Window", [

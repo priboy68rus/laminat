@@ -1,7 +1,7 @@
 import AppKit
 
 /// SQL mode (SPEC §1.5): editor on top, result grid below. The file is available as its file name
-/// and as `t1`. ⌘↩ runs the selection or the whole text, ⎋ / Stop cancels, ⌘T inserts a template.
+/// and as `t1`. ⌘↩ runs the selection or the whole text, ⎋ / Stop cancels, ⌘⇧T inserts a template.
 final class SQLViewController: NSViewController {
     let workspace: Workspace
 
@@ -124,7 +124,7 @@ final class SQLViewController: NSViewController {
             item.tag = index
             templatesButton.menu?.addItem(item)
         }
-        templatesButton.toolTip = "Insert a template (⌘T)"
+        templatesButton.toolTip = "Insert a template (⌘⇧T)"
 
         historyButton.addItem(withTitle: "History")
         historyButton.toolTip = "Queries run in this window"
@@ -190,7 +190,7 @@ final class SQLViewController: NSViewController {
         if run { runQuery(nil) }
     }
 
-    /// ⌘T: pop up the templates menu.
+    /// ⌘⇧T: pop up the templates menu.
     @objc func showTemplates(_ sender: Any?) {
         templatesButton.performClick(nil)
     }

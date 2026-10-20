@@ -3,7 +3,7 @@ Fast native macOS viewer for Apache Parquet files.
 - **Quick Look**: press Space on a `.parquet` file in Finder — schema and first rows
 - **Finder thumbnails**: file icons show a miniature of the table
 - **Viewer**: double-click — lazily loaded grid for millions of rows, sort by header click, filter per column
-- **SQL**: DuckDB SQL over the file (`FROM <file name>` or `FROM t1`), templates (⌘T), history, cancel (⎋)
+- **SQL**: DuckDB SQL over the file (`FROM <file name>` or `FROM t1`), templates (⌘⇧T), history, cancel (⎋)
 - **Statistics** (⌘3): nulls, unique values, min / max, mean, quartiles, histogram and top values
 
 Requires macOS 15+.

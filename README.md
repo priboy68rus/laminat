@@ -38,7 +38,8 @@ System Settings → General → Login Items & Extensions → Quick Look, then ru
 | ⌘1 / ⌘2 / ⌘3 | Data / SQL / Statistics |
 | ⌘↩ | Run the query (or the selected part of it) |
 | ⎋ | Cancel a running query |
-| ⌘T | Insert a query template |
+| ⌘T | Open a file in a new tab |
+| ⌘⇧T | Insert a query template |
 | ⌘F | Focus the column filters |
 | ⌘C | Copy selected rows as TSV |
 
