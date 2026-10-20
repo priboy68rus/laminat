@@ -55,6 +55,9 @@ enum MainMenu {
             item("SQL", #selector(DocumentViewController.showSQL(_:)), "2"),
             item("Statistics", #selector(DocumentViewController.showStats(_:)), "3"),
             .separator(),
+            item("Show Tab Bar", #selector(NSWindow.toggleTabBar(_:))),
+            item("Show All Tabs", #selector(NSWindow.toggleTabOverview(_:)), "\\", [.command, .shift]),
+            .separator(),
             item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]),
         ])
 
@@ -68,6 +71,11 @@ enum MainMenu {
         let window = main.addSubmenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
             item("Zoom", #selector(NSWindow.performZoom(_:))),
+            .separator(),
+            item("Show Previous Tab", #selector(NSWindow.selectPreviousTab(_:)), "\t", [.control, .shift]),
+            item("Show Next Tab", #selector(NSWindow.selectNextTab(_:)), "\t", .control),
+            item("Move Tab to New Window", #selector(NSWindow.moveTabToNewWindow(_:))),
+            item("Merge All Windows", #selector(NSWindow.mergeAllWindows(_:))),
             .separator(),
             item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:))),
         ])

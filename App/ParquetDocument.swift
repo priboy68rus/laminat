@@ -33,6 +33,10 @@ final class ViewerWindowController: NSWindowController, NSToolbarDelegate {
         window.setContentSize(NSSize(width: 1100, height: 700))
         window.minSize = NSSize(width: 480, height: 300)
         window.toolbarStyle = .unified
+        // System window tabs: new files open as tabs of the frontmost window; a tab can be dragged out
+        // into its own window (and windows merged back) with the standard Window menu commands.
+        window.tabbingIdentifier = "LaminatDocument"
+        window.tabbingMode = .preferred
         window.center()
         super.init(window: window)
         shouldCascadeWindows = true
@@ -52,6 +56,11 @@ final class ViewerWindowController: NSWindowController, NSToolbarDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
+
+    /// The "+" button in the tab bar: open another file as a new tab.
+    override func newWindowForTab(_ sender: Any?) {
+        NSDocumentController.shared.openDocument(sender)
+    }
 
     @objc private func modeChanged(_ sender: NSSegmentedControl) {
         documentController.mode = DocumentViewController.Mode(rawValue: sender.selectedSegment) ?? .data
