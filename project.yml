@@ -1,0 +1,81 @@
+name: Laminat
+
+options:
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    # Prototype: ad-hoc signing ("Sign to Run Locally"), no Apple Developer account.
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+    ENABLE_HARDENED_RUNTIME: NO
+
+targets:
+  Laminat:
+    type: application
+    platform: macOS
+    sources:
+      - App
+      - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.priboy68rus.laminat
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Laminat
+        LSApplicationCategoryType: public.app-category.developer-tools
+        NSHumanReadableCopyright: ""
+        # .parquet has no system UTI, so the host app declares one.
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: org.apache.parquet
+            UTTypeDescription: Apache Parquet file
+            UTTypeConformsTo: [public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [parquet]
+              public.mime-type: [application/vnd.apache.parquet]
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Apache Parquet file
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [org.apache.parquet]
+    dependencies:
+      - target: LaminatQuickLook
+        embed: true
+
+  LaminatQuickLook:
+    type: app-extension
+    platform: macOS
+    sources:
+      - QuickLook
+      - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.priboy68rus.laminat.QuickLook
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: QuickLook/Info.plist
+      properties:
+        CFBundleDisplayName: Laminat Quick Look
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.quicklook.preview
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PreviewProvider
+          NSExtensionAttributes:
+            QLIsDataBasedPreview: true
+            QLSupportsSearchableItems: false
+            QLSupportedContentTypes:
+              - org.apache.parquet
+    entitlements:
+      path: QuickLook/LaminatQuickLook.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-only: true
+    dependencies:
+      - sdk: QuickLookUI.framework
