@@ -66,7 +66,17 @@ final class GridCell: NSView {
         return result
     }()
 
+    /// Zebra striping, applied to row views (see GridViewController).
+    static func rowBackground(_ row: Int) -> NSColor {
+        let colors = NSColor.alternatingContentBackgroundColors
+        return colors[row % colors.count]
+    }
+
     override func draw(_ dirtyRect: NSRect) {
+        // Vertical grid line on the right edge (the table's own grid is off for performance).
+        NSColor.gridColor.setFill()
+        NSRect(x: bounds.maxX - 1, y: 0, width: 1, height: bounds.height).fill()
+
         guard !text.isEmpty else { return }
         let selected = backgroundStyle == .emphasized
         let attributes = style == .number && text.contains("e")

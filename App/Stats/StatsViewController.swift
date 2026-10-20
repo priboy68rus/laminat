@@ -144,8 +144,8 @@ final class StatsViewController: NSViewController {
         tableView.style = .fullWidth
         tableView.rowHeight = 20
         tableView.intercellSpacing = NSSize(width: 0, height: 0)
-        tableView.usesAlternatingRowBackgroundColors = true
-        tableView.gridStyleMask = [.solidVerticalGridLineMask]
+        tableView.usesAlternatingRowBackgroundColors = false  // see GridViewController
+        tableView.gridStyleMask = []
         tableView.columnAutoresizingStyle = .noColumnAutoresizing
         tableView.allowsMultipleSelection = true
         tableView.allowsColumnReordering = false
@@ -485,6 +485,7 @@ extension StatsViewController: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableView(_ tableView: NSTableView, didAdd rowView: NSTableRowView, forRow row: Int) {
         rowView.canDrawSubviewsIntoLayer = true
+        rowView.backgroundColor = GridCell.rowBackground(row)
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {

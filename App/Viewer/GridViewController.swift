@@ -120,8 +120,11 @@ final class GridViewController: NSViewController {
         tableView.style = .fullWidth
         tableView.rowHeight = 20
         tableView.intercellSpacing = NSSize(width: 0, height: 0)
-        tableView.usesAlternatingRowBackgroundColors = true
-        tableView.gridStyleMask = [.solidVerticalGridLineMask]
+        // No built-in zebra / grid: NSTableView draws them on its background view over the whole content
+        // height (600M points for 30M rows), which stalls horizontal scrolling for seconds. Row views
+        // (visible rows only) get the alternating colour instead, and cells draw their own grid line.
+        tableView.usesAlternatingRowBackgroundColors = false
+        tableView.gridStyleMask = []
         tableView.columnAutoresizingStyle = .noColumnAutoresizing
         tableView.allowsColumnReordering = false
         tableView.allowsColumnSelection = false
@@ -524,6 +527,7 @@ extension GridViewController: NSTableViewDataSource, NSTableViewDelegate {
     /// Cells draw into their row's single layer instead of each owning a backing store.
     func tableView(_ tableView: NSTableView, didAdd rowView: NSTableRowView, forRow row: Int) {
         rowView.canDrawSubviewsIntoLayer = true
+        rowView.backgroundColor = GridCell.rowBackground(row)
     }
 
     func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
