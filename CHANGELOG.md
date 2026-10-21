@@ -9,6 +9,8 @@ entries short and user-facing.
 - Standard macOS menus: Undo, Cut, Copy, Paste and Find (⌘F, ⌘G) in the SQL editor, Help menu with search
 - Data / SQL / Stats switch moved to the left of the title, like Finder's back and forward buttons
 - SQL templates use a cleaner layout
+- Finder shows .parquet files as "Parquet file"
+- Downloads are now a disk image: drag Laminat to Applications
 
 ## 0.1.2
 

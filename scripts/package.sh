@@ -43,4 +43,15 @@ rm -f "$ZIP"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 
 echo "Packaged: $ZIP"
+
+# Disk image for people: the app plus an Applications shortcut to drag it onto.
+# (The zip stays for Sparkle updates.)
+DMG="dist/Laminat-$VERSION.dmg"
+STAGING="$(mktemp -d)"
+trap 'rm -rf "$STAGING"' EXIT
+ditto "$APP" "$STAGING/Laminat.app"
+ln -s /Applications "$STAGING/Applications"
+rm -f "$DMG"
+hdiutil create -quiet -volname "Laminat" -srcfolder "$STAGING" -fs HFS+ -format UDZO -imagekey zlib-level=9 "$DMG"
+echo "Packaged: $DMG"
 lipo -archs "$APP/Contents/MacOS/Laminat"
