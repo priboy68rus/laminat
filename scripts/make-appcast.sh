@@ -26,7 +26,15 @@ else
 fi
 
 # Release notes for the update window: this version's section of CHANGELOG.md as an HTML list.
-NOTES=$(awk -v v="## ${SHORT_VERSION}" '$0 == v {f=1; next} /^## / {f=0} f && /^- / {sub(/^- /, ""); print}' CHANGELOG.md \
+# A bullet may wrap onto indented continuation lines; join them into one item.
+NOTES=$(awk -v v="## ${SHORT_VERSION}" '
+    $0 == v {f=1; next}
+    /^## / {f=0}
+    !f {next}
+    /^- / {if (item != "") print item; item = substr($0, 3); next}
+    /^  +[^ ]/ && item != "" {sub(/^ +/, ""); item = item " " $0; next}
+    END {if (item != "") print item}
+  ' CHANGELOG.md \
   | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's|^|<li>|' -e 's|$|</li>|')
 [[ -n "$NOTES" ]] || NOTES="<li>See the release page for details.</li>"
 RELEASE_PAGE="https://github.com/priboy68rus/laminat/releases/tag/v${SHORT_VERSION}"
