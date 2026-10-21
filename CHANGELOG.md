@@ -9,6 +9,7 @@ entries short and user-facing.
   work the same as for Parquet. They show up in Finder's Open With; double-click stays with your usual app
 - Join files of different formats in one query; drop any of them on the Tables list
 - Export to Excel (File → Export To → Excel…)
+- The + in the tab bar opens a file again; the New Query button in the toolbar now shows its name
 
 ## 0.1.6
 

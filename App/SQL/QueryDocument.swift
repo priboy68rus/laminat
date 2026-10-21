@@ -85,9 +85,9 @@ final class QueryWindowController: NSWindowController, NSMenuItemValidation {
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
-    /// The "+" button in the tab bar (or ⌘T): open a file or a query as a new tab.
+    /// The "+" button in the tab bar (or ⌘T): open a file as a new tab.
     override func newWindowForTab(_ sender: Any?) {
-        NewTabMenu.show(for: window, sender: sender)
+        NSDocumentController.shared.openDocument(sender)
     }
 
     @objc func runQuery(_ sender: Any?) { sql.runQuery(sender) }
