@@ -17,16 +17,17 @@ Requires macOS 15 or later (Apple Silicon or Intel).
 
 ## Install
 
-Download `Laminat-<version>.zip` from [Releases](https://github.com/priboy68rus/laminat/releases/latest).
+Download `Laminat-<version>.dmg` from [Releases](https://github.com/priboy68rus/laminat/releases/latest),
+open it and drag **Laminat** onto **Applications**. Later versions install themselves
+(Laminat → Check for Updates…).
 
 Laminat is not notarized (no paid Apple Developer account), so macOS blocks it the first time:
 
-1. Unzip and move `Laminat.app` to `/Applications`.
-2. Open it. macOS says it can't verify the app — click **Done**.
-3. Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to the
+1. Open Laminat. macOS says it can't verify the app — click **Done**.
+2. Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to the
    message about Laminat, then confirm with your password or Touch ID.
    Or, in Terminal: `xattr -dr com.apple.quarantine /Applications/Laminat.app`
-4. Launch Laminat once — this registers Quick Look and thumbnails.
+3. Launch Laminat once — this registers Quick Look and thumbnails.
 
 If Space doesn't show the preview, enable **Laminat Quick Look** in
 System Settings → General → Login Items & Extensions → Quick Look, then run
@@ -88,7 +89,8 @@ build/Build/Products/Debug/laminat-cli exec "COPY (SELECT * FROM range(10)) TO '
 1. Bump `MARKETING_VERSION` **and** `CURRENT_PROJECT_VERSION` in `project.yml` (Sparkle compares the
    build number), add a section to `CHANGELOG.md` (shown in the in-app update window).
 2. Push a `v*` tag. GitHub Actions builds a universal, ad-hoc signed app, signs the zip with the Sparkle
-   key, and publishes a release with `Laminat-<version>.zip` and `appcast.xml`. Tags with a `-`
+   key, and publishes a release with `Laminat-<version>.dmg` (for people), `Laminat-<version>.zip` (for Sparkle)
+   and `appcast.xml`. Tags with a `-`
    (`v0.2.0-beta1`) become pre-releases and are not offered as updates.
 
 Self-update uses [Sparkle](https://sparkle-project.org): installed copies read
