@@ -48,7 +48,8 @@ System Settings → General → Login Items & Extensions → Quick Look, then ru
 **File → Export To → CSV / Parquet / JSON Lines** saves what the current tab shows — the file with its
 sort and filters applied, or the SQL result — with full values and all columns.
 
-In SQL the file is available under its file name without the extension and as `t1`. Only read-only
+In SQL the file is available under its file name without the extension and as `t1`. Drop more
+`.parquet` files on the **Tables** sidebar (or the editor) to join them — they become `t2`, `t3`… Only read-only
 statements run (SELECT, WITH, DESCRIBE, SUMMARIZE, …); results are capped at 1 000 000 rows.
 
 ## Build from source

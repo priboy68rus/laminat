@@ -1,12 +1,15 @@
 import AppKit
 
-/// SQL mode (SPEC §1.5): editor on top, result grid below. The file is available as its file name
-/// and as `t1`. ⌘↩ runs the selection or the whole text, ⎋ / Stop cancels, ⌘⇧T inserts a template.
+/// SQL mode (SPEC §1.5): tables sidebar on the left; editor on top, result grid below. The file is
+/// available as its file name and as `t1`; more files can be added (sidebar ＋ or drag and drop) as
+/// `t2`, `t3`… ⌘↩ runs the selection or the whole text, ⎋ / Stop cancels, ⌘⇧T inserts a template.
 final class SQLViewController: NSViewController {
     let workspace: Workspace
 
     private let split = NSSplitView()
-    private let textView: NSTextView
+    private let outerSplit = NSSplitView()
+    private lazy var sidebar = TablesSidebar(workspace: workspace)
+    private let textView: SQLTextView
     private let editorScroll: NSScrollView
     private let runButton = NSButton(title: "Run", target: nil, action: nil)
     private let stopButton = NSButton(title: "Stop", target: nil, action: nil)
@@ -24,8 +27,7 @@ final class SQLViewController: NSViewController {
 
     init(workspace: Workspace) {
         self.workspace = workspace
-        editorScroll = NSTextView.scrollableTextView()
-        textView = editorScroll.documentView as! NSTextView
+        (editorScroll, textView) = SQLTextView.makeScrollable()
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -53,20 +55,41 @@ final class SQLViewController: NSViewController {
 
         overlay.install(in: resultsContainer)
         overlay.onCancel = { [weak self] in self?.stopQuery(nil) }
-        showPlaceholder("Press ⌘↩ to run the query. The file is available as \(workspace.tableNameForSQL) and as \(Workspace.alias).")
+        showPlaceholder("Press ⌘↩ to run the query. The file is available as \(workspace.tableNameForSQL) and as \(Workspace.alias).\nDrop more .parquet files on the Tables list or the editor to join them.")
+
+        // Tables sidebar: inserting names, adding files dropped on the editor.
+        addChild(sidebar)
+        sidebar.onInsert = { [weak self] text in self?.insertAtCursor(text) }
+        sidebar.onError = { [weak self] message in
+            self?.statusLabel.textColor = .systemRed
+            self?.statusLabel.stringValue = message
+        }
+        textView.onDropFiles = { [weak self] urls in
+            // Files dropped into the query become tables; their names go where they were dropped.
+            guard let self else { return nil }
+            let names = sidebar.add(urls).map { Workspace.sqlName($0.name) }
+            return names.isEmpty ? nil : names.joined(separator: ", ")
+        }
 
         split.isVertical = false
         split.dividerStyle = .thin
         split.addArrangedSubview(editorPane)
         split.addArrangedSubview(resultsContainer)
         split.setHoldingPriority(.defaultLow + 1, forSubviewAt: 0)
-        split.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(split)
+        outerSplit.isVertical = true
+        outerSplit.dividerStyle = .thin
+        outerSplit.addArrangedSubview(sidebar.view)
+        outerSplit.addArrangedSubview(split)
+        outerSplit.setHoldingPriority(.defaultLow + 2, forSubviewAt: 0)  // sidebar keeps its width
+        outerSplit.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(outerSplit)
         NSLayoutConstraint.activate([
-            split.topAnchor.constraint(equalTo: root.topAnchor),
-            split.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            split.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            split.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            outerSplit.topAnchor.constraint(equalTo: root.topAnchor),
+            outerSplit.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            outerSplit.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            outerSplit.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            sidebar.view.widthAnchor.constraint(greaterThanOrEqualToConstant: 160),
+            split.widthAnchor.constraint(greaterThanOrEqualToConstant: 360),
             editorPane.heightAnchor.constraint(greaterThanOrEqualToConstant: 90),
             resultsContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 120),
         ])
@@ -79,6 +102,7 @@ final class SQLViewController: NSViewController {
         if split.subviews.first?.frame.height ?? 0 > 0, !didPositionDivider {
             didPositionDivider = true
             split.setPosition(220, ofDividerAt: 0)
+            outerSplit.setPosition(230, ofDividerAt: 0)
         }
         view.window?.makeFirstResponder(textView)
     }
@@ -220,6 +244,16 @@ final class SQLViewController: NSViewController {
         view.window?.makeFirstResponder(textView)
     }
 
+    /// Inserts `text` at the cursor (replacing the selection), undoably, and focuses the editor.
+    private func insertAtCursor(_ text: String) {
+        let range = textView.selectedRange()
+        if textView.shouldChangeText(in: range, replacementString: text) {
+            textView.replaceCharacters(in: range, with: text)
+            textView.didChangeText()
+        }
+        view.window?.makeFirstResponder(textView)
+    }
+
     /// Replaces the editor text through the text system so the change can be undone.
     private func replaceText(with text: String) {
         let full = NSRange(location: 0, length: (textView.string as NSString).length)
@@ -347,8 +381,8 @@ extension SQLViewController: NSTextViewDelegate {
     func textView(_ textView: NSTextView, completions words: [String], forPartialWordRange charRange: NSRange,
                   indexOfSelectedItem index: UnsafeMutablePointer<Int>?) -> [String] {
         let prefix = (textView.string as NSString).substring(with: charRange).lowercased()
-        let candidates = workspace.summary.columns.map(\.name)
-            + [workspace.tableNameForSQL, Workspace.alias]
+        let candidates = workspace.tables.flatMap { $0.columns.map(\.name) }
+            + workspace.tables.flatMap { [Workspace.sqlName($0.name), $0.alias] }
             + SQLHighlighter.keywords
         var seen = Set<String>()
         return candidates.filter { $0.lowercased().hasPrefix(prefix) && seen.insert($0).inserted }

@@ -5,6 +5,7 @@ import Foundation
 //   laminat-cli preview <file.parquet> [--html out.html] [--runs N]
 //   laminat-cli exec "<sql>"
 //   laminat-cli bench <file.parquet> [visible-columns]   — times grid paging (same code as the app)
+//   laminat-cli join <file.parquet> <other.parquet> "<sql>" — adds a second table like the SQL sidebar does
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data((message + "\n").utf8))
@@ -101,6 +102,34 @@ case "bench":
             }
         }
         print(String(format: "%-46@ %8.0f MB", "resident memory after" as NSString, Double(info.resident_size) / 1_048_576))
+    } catch {
+        fail("error: \(error.localizedDescription)")
+    }
+
+case "join":
+    guard args.count >= 4 else { fail("usage: laminat-cli join <file> <other> \"<sql>\"") }
+    do {
+        let workspace = try Workspace(url: URL(fileURLWithPath: args[1]))
+        let added = try workspace.addFile(URL(fileURLWithPath: args[2]))
+        let again = try workspace.addFile(URL(fileURLWithPath: args[2]))
+        let clash = try workspace.addFile(URL(fileURLWithPath: args[1]))
+        print("tables:", workspace.tables.map { "\($0.name) (\($0.alias))" }.joined(separator: ", "))
+        print("re-adding returns the same entry:", again.alias == added.alias, "| primary again:", clash.isPrimary)
+        var done = false
+        workspace.runSQL(args[3]) { result in
+            switch result {
+            case .success(let r):
+                print("rows: \(r.rowCount), columns: \(r.session.columns.map(\.name).joined(separator: ", "))")
+                if let page = try? r.session.loadPageSync(0, columns: Array(r.session.columns.indices), of: r.session.identityView) {
+                    for row in 0..<min(3, page.values.first?.count ?? 0) {
+                        print("  ", r.session.columns.indices.map { page[$0]?[row] ?? "NULL" }.joined(separator: " | "))
+                    }
+                }
+            case .failure(let error): print("error:", error.localizedDescription)
+            }
+            done = true
+        }
+        while !done { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
     } catch {
         fail("error: \(error.localizedDescription)")
     }

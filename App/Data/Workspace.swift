@@ -27,20 +27,78 @@ final class Workspace {
         summary = try ParquetFile(url: url, connection: sqlConnection).summary()
 
         tableName = url.deletingPathExtension().lastPathComponent
-        let file = "read_parquet(\(SQL.string(url.path)))"
-        try sqlConnection.execute("CREATE VIEW \(SQL.identifier(Self.alias)) AS SELECT * FROM \(file)")
-        if tableName.lowercased() != Self.alias {
-            try sqlConnection.execute("CREATE VIEW \(SQL.identifier(tableName)) AS SELECT * FROM \(file)")
-        }
+        try Self.registerViews(name: tableName, alias: Self.alias, url: url, on: sqlConnection)
+        tables = [TableEntry(name: tableName, alias: Self.alias, url: url, columns: summary.columns, isPrimary: true)]
 
         fileSession = try TableSession(database: database, source: .parquet(url),
                                        columns: summary.columns, totalRows: Int(summary.rowCount))
     }
 
     /// The table name as it should be typed in SQL: bare if it is a plain identifier, quoted otherwise.
-    var tableNameForSQL: String {
-        let plain = tableName.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil
-        return plain ? tableName : SQL.identifier(tableName)
+    var tableNameForSQL: String { Self.sqlName(tableName) }
+
+    static func sqlName(_ name: String) -> String {
+        let plain = name.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil
+        return plain ? name : SQL.identifier(name)
+    }
+
+    // MARK: Tables
+
+    /// A file available to SQL in this window, under its file name and an alias (t1, t2, …).
+    struct TableEntry {
+        let name: String
+        let alias: String
+        let url: URL
+        let columns: [ParquetColumn]
+        /// The window's own file (can't be removed).
+        let isPrimary: Bool
+    }
+
+    /// The window's file first, then files added in the SQL tab, in the order they were added.
+    private(set) var tables: [TableEntry]
+    private var nextAliasNumber = 2
+
+    /// Makes another Parquet file queryable in this window (SQL tab → Tables → ＋ or drag and drop).
+    /// Returns the existing entry if the file is already there. Footer only, so it is quick.
+    func addFile(_ url: URL) throws -> TableEntry {
+        if let existing = tables.first(where: { $0.url.standardizedFileURL == url.standardizedFileURL }) {
+            return existing
+        }
+        let connection = try Connection(database)  // DDL off the SQL queue: a query may be running
+        let summary = try ParquetFile(url: url, connection: connection).summary()
+
+        // File name as the table name; "_2", "_3"… on a clash with a name or an alias already in use.
+        let taken = Set(tables.flatMap { [$0.name.lowercased(), $0.alias.lowercased()] })
+        let base = url.deletingPathExtension().lastPathComponent
+        var name = base
+        var suffix = 2
+        while taken.contains(name.lowercased()) || name.range(of: "^t[0-9]+$", options: [.regularExpression, .caseInsensitive]) != nil {
+            name = "\(base)_\(suffix)"
+            suffix += 1
+        }
+        let alias = "t\(nextAliasNumber)"
+        nextAliasNumber += 1
+
+        try Self.registerViews(name: name, alias: alias, url: url, on: connection)
+        let entry = TableEntry(name: name, alias: alias, url: url, columns: summary.columns, isPrimary: false)
+        tables.append(entry)
+        return entry
+    }
+
+    func removeTable(alias: String) {
+        guard let index = tables.firstIndex(where: { $0.alias == alias && !$0.isPrimary }),
+              let connection = try? Connection(database) else { return }
+        let entry = tables.remove(at: index)
+        try? connection.execute("DROP VIEW IF EXISTS \(SQL.identifier(entry.alias))")
+        try? connection.execute("DROP VIEW IF EXISTS \(SQL.identifier(entry.name))")
+    }
+
+    private static func registerViews(name: String, alias: String, url: URL, on connection: Connection) throws {
+        let file = "read_parquet(\(SQL.string(url.path)))"
+        try connection.execute("CREATE OR REPLACE VIEW \(SQL.identifier(alias)) AS SELECT * FROM \(file)")
+        if name.lowercased() != alias.lowercased() {
+            try connection.execute("CREATE OR REPLACE VIEW \(SQL.identifier(name)) AS SELECT * FROM \(file)")
+        }
     }
 
     // MARK: SQL

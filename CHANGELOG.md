@@ -3,6 +3,12 @@
 The section for a version is shown in the in-app update window (scripts/make-appcast.sh), so keep the
 entries short and user-facing.
 
+## 0.1.5
+
+- SQL across files: a Tables sidebar in the SQL tab lists the window's tables and their columns; add more
+  .parquet files with ＋ or by dropping them on the list or the editor, then join them by name or t2, t3…
+- Double-click a table or column in the sidebar to insert its name; completion knows all tables
+
 ## 0.1.4
 
 - Current macOS 26 design (Liquid Glass): release builds now use the macOS 26 SDK
