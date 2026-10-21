@@ -3,6 +3,13 @@
 The section for a version is shown in the in-app update window (scripts/make-appcast.sh), so keep the
 entries short and user-facing.
 
+## 0.1.6
+
+- Queries get their own tabs: File → New Query (⌘N); every open file is a table there, no more switching
+  between a file's tabs and views
+- File tabs show Data and Stats (⌘1 / ⌘2)
+- Press Space on a table in the query sidebar to preview it, like Quick Look
+
 ## 0.1.5
 
 - SQL across files: a Tables sidebar in the SQL tab lists the window's tables and their columns; add more

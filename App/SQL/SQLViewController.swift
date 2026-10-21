@@ -1,14 +1,15 @@
 import AppKit
 
-/// SQL mode (SPEC §1.5): tables sidebar on the left; editor on top, result grid below. The file is
-/// available as its file name and as `t1`; more files can be added (sidebar ＋ or drag and drop) as
-/// `t2`, `t3`… ⌘↩ runs the selection or the whole text, ⎋ / Stop cancels, ⌘⇧T inserts a template.
+/// A query tab (SPEC §1.5): tables sidebar on the left (every open file plus files added here);
+/// editor on top, result grid below. ⌘↩ runs the selection or the whole text, ⎋ / Stop cancels,
+/// ⌘⇧T inserts a template.
 final class SQLViewController: NSViewController {
-    let workspace: Workspace
+    let session: QuerySession
+    private let initialSQL: String
 
     private let split = NSSplitView()
     private let outerSplit = NSSplitView()
-    private lazy var sidebar = TablesSidebar(workspace: workspace)
+    private lazy var sidebar = TablesSidebar(session: session)
     private let textView: SQLTextView
     private let editorScroll: NSScrollView
     private let runButton = NSButton(title: "Run", target: nil, action: nil)
@@ -21,12 +22,13 @@ final class SQLViewController: NSViewController {
     private let overlay = ProgressOverlay(frame: .zero)
 
     private var resultGrid: GridViewController?
-    private var currentResult: Workspace.SQLResult?
+    private var currentResult: QuerySession.SQLResult?
     private var history: [String] = []
     private var isRunning = false { didSet { updateControls() } }
 
-    init(workspace: Workspace) {
-        self.workspace = workspace
+    init(session: QuerySession, initialSQL: String) {
+        self.session = session
+        self.initialSQL = initialSQL
         (editorScroll, textView) = SQLTextView.makeScrollable()
         super.init(nibName: nil, bundle: nil)
     }
@@ -55,7 +57,7 @@ final class SQLViewController: NSViewController {
 
         overlay.install(in: resultsContainer)
         overlay.onCancel = { [weak self] in self?.stopQuery(nil) }
-        showPlaceholder("Press ⌘↩ to run the query. The file is available as \(workspace.tableNameForSQL) and as \(Workspace.alias).\nDrop more .parquet files on the Tables list or the editor to join them.")
+        showPlaceholder("Press ⌘↩ to run the query. Every open file is a table (see the list on the left).\nDrop more .parquet files on the list or the editor to join them; press Space on a table to preview it.")
 
         // Tables sidebar: inserting names, adding files dropped on the editor.
         addChild(sidebar)
@@ -67,7 +69,7 @@ final class SQLViewController: NSViewController {
         textView.onDropFiles = { [weak self] urls in
             // Files dropped into the query become tables; their names go where they were dropped.
             guard let self else { return nil }
-            let names = sidebar.add(urls).map { Workspace.sqlName($0.name) }
+            let names = sidebar.add(urls).map { Catalog.sqlName($0.name) }
             return names.isEmpty ? nil : names.joined(separator: ", ")
         }
 
@@ -124,7 +126,7 @@ final class SQLViewController: NSViewController {
         textView.usesFindBar = true  // Edit → Find (⌘F, ⌘G…) like any macOS text editor
         textView.isIncrementalSearchingEnabled = true
         textView.delegate = self
-        textView.string = SQLTemplate.all[0].sql.replacingOccurrences(of: "{t}", with: workspace.tableNameForSQL)
+        textView.string = initialSQL
         if let storage = textView.textStorage { SQLHighlighter.apply(to: storage) }
     }
 
@@ -185,7 +187,7 @@ final class SQLViewController: NSViewController {
         statusLabel.stringValue = "Running…"
         overlay.start("Executing query…")
         let startedAt = Date()
-        workspace.runSQL(text) { [weak self] result in
+        session.run(text) { [weak self] result in
             guard let self else { return }
             isRunning = false
             overlay.stop()
@@ -206,7 +208,7 @@ final class SQLViewController: NSViewController {
     }
 
     @objc func stopQuery(_ sender: Any?) {
-        workspace.cancelSQL()
+        session.cancel()
     }
 
     /// Replaces the editor text (undoably) and optionally runs it.
@@ -223,6 +225,17 @@ final class SQLViewController: NSViewController {
         resultGrid?.exportData(sender)
     }
 
+    /// File → Export To while the editor has focus: export the current result.
+    @objc func exportData(_ sender: Any?) {
+        guard canExportResult else { NSSound.beep(); return }
+        resultGrid?.exportData(sender)
+    }
+
+    /// Table used by templates: the one selected in the sidebar, else the first open file.
+    private var templateTable: String {
+        sidebar.selectedTableName ?? Catalog.shared.tables.first?.name ?? "my_table"
+    }
+
     /// ⌘⇧T: pop up the templates menu.
     @objc func showTemplates(_ sender: Any?) {
         templatesButton.performClick(nil)
@@ -230,7 +243,7 @@ final class SQLViewController: NSViewController {
 
     @objc private func insertTemplate(_ sender: NSMenuItem) {
         let template = SQLTemplate.all[sender.tag]
-        let sql = template.sql.replacingOccurrences(of: "{t}", with: workspace.tableNameForSQL)
+        let sql = template.sql.replacingOccurrences(of: "{t}", with: Catalog.sqlName(templateTable))
         replaceText(with: sql)
         if !selectNextPlaceholder() {
             textView.setSelectedRange(NSRange(location: (sql as NSString).length, length: 0))
@@ -305,16 +318,16 @@ final class SQLViewController: NSViewController {
 
     // MARK: Results
 
-    private func show(_ result: Workspace.SQLResult) {
+    private func show(_ result: QuerySession.SQLResult) {
         var details = String(format: "%.2f s", result.duration)
-        if result.truncated { details += " · result truncated to \(Workspace.maxResultRows.formatted()) rows" }
+        if result.truncated { details += " · result truncated to \(QuerySession.maxResultRows.formatted()) rows" }
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.stringValue = "\(result.rowCount.formatted()) row\(result.rowCount == 1 ? "" : "s") · " + details
 
         let grid = GridViewController(session: result.session, details: details)
-        grid.exportName = "\(workspace.tableName)_query"
+        grid.exportName = "query"
         setResultView(grid.view, controller: grid)
-        if let previous = currentResult { workspace.dropResult(previous) }
+        if let previous = currentResult { session.dropResult(previous) }
         currentResult = result
     }
 
@@ -381,8 +394,9 @@ extension SQLViewController: NSTextViewDelegate {
     func textView(_ textView: NSTextView, completions words: [String], forPartialWordRange charRange: NSRange,
                   indexOfSelectedItem index: UnsafeMutablePointer<Int>?) -> [String] {
         let prefix = (textView.string as NSString).substring(with: charRange).lowercased()
-        let candidates = workspace.tables.flatMap { $0.columns.map(\.name) }
-            + workspace.tables.flatMap { [Workspace.sqlName($0.name), $0.alias] }
+        let tables = Catalog.shared.tables
+        let candidates = tables.flatMap { $0.columns.map(\.name) }
+            + tables.flatMap { [Catalog.sqlName($0.name), $0.alias] }
             + SQLHighlighter.keywords
         var seen = Set<String>()
         return candidates.filter { $0.lowercased().hasPrefix(prefix) && seen.insert($0).inserted }
@@ -394,6 +408,7 @@ extension SQLViewController: NSMenuItemValidation {
         switch item.action {
         case #selector(runQuery(_:)): return !isRunning
         case #selector(stopQuery(_:)): return isRunning
+        case #selector(exportData(_:)): return canExportResult
         default: return true
         }
     }

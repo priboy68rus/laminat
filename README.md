@@ -8,8 +8,8 @@ A fast, native macOS viewer for Apache Parquet files. No Electron: AppKit + an e
 - **Viewer** — double-click a file: a lazily loaded grid that scrolls through millions of rows, sort by
   clicking a column header, filter with the field under each header.
 - **Export** — save the current view or a query result as CSV, Parquet or JSON Lines.
-- **SQL** — query the file with DuckDB SQL (`SELECT … FROM <file name>` or `FROM t1`), with templates,
-  history and cancellation.
+- **SQL** — query tabs (⌘N) over all open files with DuckDB SQL (`SELECT … FROM <file name>`), joins
+  across files, templates, history and cancellation.
 - **Statistics** — per-column profile: nulls, unique values, min / max, mean, quartiles; histogram and
   top values of a selected column.
 
@@ -37,7 +37,8 @@ System Settings → General → Login Items & Extensions → Quick Look, then ru
 
 | | |
 |---|---|
-| ⌘1 / ⌘2 / ⌘3 | Data / SQL / Statistics |
+| ⌘N | New query tab (SQL over all open files) |
+| ⌘1 / ⌘2 | Data / Statistics of a file |
 | ⌘↩ | Run the query (or the selected part of it) |
 | ⎋ | Cancel a running query |
 | ⌘T | Open a file in a new tab |
@@ -48,8 +49,10 @@ System Settings → General → Login Items & Extensions → Quick Look, then ru
 **File → Export To → CSV / Parquet / JSON Lines** saves what the current tab shows — the file with its
 sort and filters applied, or the SQL result — with full values and all columns.
 
-In SQL the file is available under its file name without the extension and as `t1`. Drop more
-`.parquet` files on the **Tables** sidebar (or the editor) to join them — they become `t2`, `t3`… Only read-only
+Queries live in their own tabs (**File → New Query**, ⌘N), next to the files. Every open file is a
+table — under its file name without the extension and an alias `t1`, `t2`… — listed in the query's
+**Tables** sidebar; drop more `.parquet` files there (or on the editor) to join them, press Space on a
+table to preview it. Only read-only
 statements run (SELECT, WITH, DESCRIBE, SUMMARIZE, …); results are capped at 1 000 000 rows.
 
 ## Build from source

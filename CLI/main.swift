@@ -109,14 +109,15 @@ case "bench":
 case "join":
     guard args.count >= 4 else { fail("usage: laminat-cli join <file> <other> \"<sql>\"") }
     do {
+        // Same objects as the app: the first file as an open window, the second added to a query tab.
         let workspace = try Workspace(url: URL(fileURLWithPath: args[1]))
-        let added = try workspace.addFile(URL(fileURLWithPath: args[2]))
-        let again = try workspace.addFile(URL(fileURLWithPath: args[2]))
-        let clash = try workspace.addFile(URL(fileURLWithPath: args[1]))
-        print("tables:", workspace.tables.map { "\($0.name) (\($0.alias))" }.joined(separator: ", "))
-        print("re-adding returns the same entry:", again.alias == added.alias, "| primary again:", clash.isPrimary)
+        let query = try QuerySession()
+        let added = try query.addFile(URL(fileURLWithPath: args[2]))
+        let again = try query.addFile(URL(fileURLWithPath: args[2]))
+        print("tables:", Catalog.shared.tables.map { "\($0.name) (\($0.alias))" }.joined(separator: ", "))
+        print("re-adding returns the same entry:", again.alias == added.alias, "| window table:", workspace.tableName)
         var done = false
-        workspace.runSQL(args[3]) { result in
+        query.run(args[3]) { result in
             switch result {
             case .success(let r):
                 print("rows: \(r.rowCount), columns: \(r.session.columns.map(\.name).joined(separator: ", "))")
@@ -130,6 +131,9 @@ case "join":
             done = true
         }
         while !done { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        query.close()
+        workspace.close()
+        print("after closing both:", Catalog.shared.tables.count, "tables")
     } catch {
         fail("error: \(error.localizedDescription)")
     }

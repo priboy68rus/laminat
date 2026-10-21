@@ -1,9 +1,10 @@
 import AppKit
 
-/// SQL tab sidebar: the window's tables (its file plus any added ones) with their columns.
-/// ＋ or dropping .parquet files from Finder adds tables; double-click inserts a name into the query.
+/// Query tab sidebar: every table in the app-wide catalog (open files plus files added to queries)
+/// with its columns. ＋ or dropping .parquet files adds tables; double-click inserts a name; Space (or
+/// Preview) shows the first rows in a popover, like Quick Look.
 final class TablesSidebar: NSViewController {
-    let workspace: Workspace
+    let session: QuerySession
     /// Inserts text at the editor's cursor.
     var onInsert: ((String) -> Void)?
     /// Called after tables were added or removed (for completion, etc.).
@@ -11,13 +12,15 @@ final class TablesSidebar: NSViewController {
     /// Reports a problem (e.g. a file that isn't Parquet).
     var onError: ((String) -> Void)?
 
-    private let outline = NSOutlineView()
+    private let outline = SidebarOutlineView()
+    private var catalogObserver: NSObjectProtocol?
+    private var previewPopover: NSPopover?
 
     /// Outline items are reference types so NSOutlineView can track them.
     private final class TableItem {
-        let entry: Workspace.TableEntry
+        let entry: Catalog.TableEntry
         lazy var columns = entry.columns.map { ColumnItem(column: $0) }
-        init(_ entry: Workspace.TableEntry) { self.entry = entry }
+        init(_ entry: Catalog.TableEntry) { self.entry = entry }
     }
 
     private final class ColumnItem {
@@ -27,9 +30,27 @@ final class TablesSidebar: NSViewController {
 
     private var items: [TableItem] = []
 
-    init(workspace: Workspace) {
-        self.workspace = workspace
+    init(session: QuerySession) {
+        self.session = session
         super.init(nibName: nil, bundle: nil)
+        catalogObserver = NotificationCenter.default.addObserver(forName: Catalog.didChange, object: nil, queue: .main) {
+            [weak self] _ in
+            guard let self, isViewLoaded else { return }
+            reload()
+            onTablesChanged?()
+        }
+    }
+
+    deinit {
+        if let catalogObserver { NotificationCenter.default.removeObserver(catalogObserver) }
+    }
+
+    /// Name of the table selected in the list (or owning the selected column), for templates.
+    var selectedTableName: String? {
+        let item = outline.item(atRow: outline.selectedRow)
+        if let table = item as? TableItem { return table.entry.name }
+        if let column = item, let parent = outline.parent(forItem: column) as? TableItem { return parent.entry.name }
+        return nil
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -56,6 +77,7 @@ final class TablesSidebar: NSViewController {
         outline.doubleAction = #selector(doubleClicked(_:))
         outline.target = self
         outline.registerForDraggedTypes([.fileURL])
+        outline.onSpace = { [weak self] in self?.previewSelected() }
         outline.setDraggingSourceOperationMask(.copy, forLocal: false)
 
         let menu = NSMenu()
@@ -68,7 +90,7 @@ final class TablesSidebar: NSViewController {
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
 
-        let hint = NSTextField(wrappingLabelWithString: "Drop .parquet files here to query them together.")
+        let hint = NSTextField(wrappingLabelWithString: "Every open file is listed here. Drop more .parquet files to join them; Space previews a table.")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .tertiaryLabelColor
 
@@ -94,12 +116,12 @@ final class TablesSidebar: NSViewController {
         ])
         view = root
         reload()
-        outline.expandItem(items.first)
+        if items.count == 1 { outline.expandItem(items.first) }
     }
 
     func reload() {
         let expanded = Set(items.filter { outline.isItemExpanded($0) }.map(\.entry.alias))
-        items = workspace.tables.map(TableItem.init)
+        items = Catalog.shared.tables.map(TableItem.init)
         outline.reloadData()
         for item in items where expanded.contains(item.entry.alias) { outline.expandItem(item) }
     }
@@ -111,7 +133,7 @@ final class TablesSidebar: NSViewController {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.init("org.apache.parquet") ?? .data]
         panel.allowsMultipleSelection = true
-        panel.message = "Add Parquet files to query them together with \(workspace.tableName)"
+        panel.message = "Add Parquet files to this query"
         panel.prompt = "Add"
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let self else { return }
@@ -121,11 +143,11 @@ final class TablesSidebar: NSViewController {
 
     /// Adds files as tables; returns the entries (existing ones for files already added).
     @discardableResult
-    func add(_ urls: [URL]) -> [Workspace.TableEntry] {
-        var added: [Workspace.TableEntry] = []
+    func add(_ urls: [URL]) -> [Catalog.TableEntry] {
+        var added: [Catalog.TableEntry] = []
         for url in urls {
             do {
-                let entry = try workspace.addFile(url)
+                let entry = try session.addFile(url)
                 added.append(entry)
             } catch {
                 onError?("Can't add \(url.lastPathComponent): \(error.localizedDescription)")
@@ -150,19 +172,59 @@ final class TablesSidebar: NSViewController {
     @objc private func doubleClicked(_ sender: Any?) {
         let item = outline.item(atRow: outline.clickedRow)
         if let table = item as? TableItem {
-            onInsert?(Workspace.sqlName(table.entry.name))
+            onInsert?(Catalog.sqlName(table.entry.name))
         } else if let column = item as? ColumnItem {
-            onInsert?(Workspace.sqlName(column.column.name))
+            onInsert?(Catalog.sqlName(column.column.name))
         }
     }
 
     @objc private func insertName(_ sender: NSMenuItem) {
         let item = outline.item(atRow: outline.clickedRow)
         if let table = item as? TableItem {
-            onInsert?(Workspace.sqlName(sender.tag == 1 ? table.entry.alias : table.entry.name))
+            onInsert?(Catalog.sqlName(sender.tag == 1 ? table.entry.alias : table.entry.name))
         } else if let column = item as? ColumnItem {
-            onInsert?(Workspace.sqlName(column.column.name))
+            onInsert?(Catalog.sqlName(column.column.name))
         }
+    }
+
+    // MARK: Preview (Space, like Quick Look)
+
+    @objc private func previewClicked(_ sender: Any?) {
+        guard let table = outline.item(atRow: outline.clickedRow) as? TableItem else { return }
+        preview(table, row: outline.clickedRow)
+    }
+
+    private func previewSelected() {
+        if let popover = previewPopover, popover.isShown {
+            popover.performClose(nil)
+            return
+        }
+        var row = outline.selectedRow
+        var item = outline.item(atRow: row)
+        if item is ColumnItem, let parent = outline.parent(forItem: item) as? TableItem {
+            item = parent
+            row = outline.row(forItem: parent)
+        }
+        guard let table = item as? TableItem else { return }
+        preview(table, row: row)
+    }
+
+    /// A popover with the table's grid: lazy paging, sorting and filters work there too.
+    private func preview(_ table: TableItem, row: Int) {
+        guard row >= 0, let tableSession = try? TableSession(
+            database: Catalog.shared.database, source: .parquet(table.entry.url),
+            columns: table.entry.columns, totalRows: table.entry.rowCount) else { NSSound.beep(); return }
+        let grid = GridViewController(session: tableSession, details: table.entry.name)
+        grid.exportName = table.entry.name
+        grid.view.frame = NSRect(x: 0, y: 0, width: 760, height: 440)
+
+        previewPopover?.performClose(nil)
+        let popover = NSPopover()
+        popover.contentViewController = grid
+        popover.contentSize = NSSize(width: 760, height: 440)
+        popover.behavior = .transient
+        popover.show(relativeTo: outline.rect(ofRow: row), of: outline, preferredEdge: .maxX)
+        previewPopover = popover
     }
 
     @objc private func revealInFinder(_ sender: Any?) {
@@ -171,10 +233,8 @@ final class TablesSidebar: NSViewController {
     }
 
     @objc private func removeTable(_ sender: Any?) {
-        guard let table = outline.item(atRow: outline.clickedRow) as? TableItem, !table.entry.isPrimary else { return }
-        workspace.removeTable(alias: table.entry.alias)
-        reload()
-        onTablesChanged?()
+        guard let table = outline.item(atRow: outline.clickedRow) as? TableItem, session.owns(table.entry.url) else { return }
+        session.removeFile(table.entry.url)  // the catalog notifies, which reloads the list
     }
 }
 
@@ -183,15 +243,17 @@ extension TablesSidebar: NSMenuDelegate {
         menu.removeAllItems()
         let item = outline.item(atRow: outline.clickedRow)
         if let table = item as? TableItem {
+            menu.addItem(withTitle: "Preview", action: #selector(previewClicked(_:)), keyEquivalent: "").target = self
+            menu.addItem(.separator())
             menu.addItem(withTitle: "Insert Name", action: #selector(insertName(_:)), keyEquivalent: "").target = self
             let alias = menu.addItem(withTitle: "Insert Alias (\(table.entry.alias))", action: #selector(insertName(_:)), keyEquivalent: "")
             alias.target = self
             alias.tag = 1
             menu.addItem(.separator())
             menu.addItem(withTitle: "Show in Finder", action: #selector(revealInFinder(_:)), keyEquivalent: "").target = self
-            if !table.entry.isPrimary {
+            if session.owns(table.entry.url) {
                 menu.addItem(.separator())
-                menu.addItem(withTitle: "Remove from Query Tables", action: #selector(removeTable(_:)), keyEquivalent: "").target = self
+                menu.addItem(withTitle: "Remove from This Query", action: #selector(removeTable(_:)), keyEquivalent: "").target = self
             }
         } else if item is ColumnItem {
             menu.addItem(withTitle: "Insert Name", action: #selector(insertName(_:)), keyEquivalent: "").target = self
@@ -284,5 +346,14 @@ private final class SidebarCell: NSTableCellView {
         textField?.font = bold ? .systemFont(ofSize: 12, weight: .semibold) : .systemFont(ofSize: 12)
         self.detail.stringValue = detail
         self.toolTip = toolTip
+    }
+}
+
+/// Outline view that reports the Space bar (preview), like Finder's Quick Look.
+private final class SidebarOutlineView: NSOutlineView {
+    var onSpace: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if event.charactersIgnoringModifiers == " " { onSpace?() } else { super.keyDown(with: event) }
     }
 }

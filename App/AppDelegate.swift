@@ -24,6 +24,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         return true
     }
 
+    /// File → New Query (⌘N): a query tab over all open files.
+    @objc func newQuery(_ sender: Any?) {
+        QueryDocument.open()
+    }
+
     @objc func showHelp(_ sender: Any?) {
         NSWorkspace.shared.open(URL(string: "https://github.com/priboy68rus/laminat#readme")!)
     }
@@ -80,6 +85,7 @@ enum MainMenu {
 
         main.addSubmenu("File", [
             // ⌘T like Finder and Terminal: pick a file and open it as a new tab.
+            item("New Query", #selector(AppDelegate.newQuery(_:)), "n"),
             item("New Tab…", #selector(NSResponder.newWindowForTab(_:)), "t"),
             item("Open…", #selector(NSDocumentController.openDocument(_:)), "o"),
             recentItem,
@@ -118,8 +124,7 @@ enum MainMenu {
 
         main.addSubmenu("View", [
             item("Data", #selector(DocumentViewController.showData(_:)), "1"),
-            item("SQL", #selector(DocumentViewController.showSQL(_:)), "2"),
-            item("Statistics", #selector(DocumentViewController.showStats(_:)), "3"),
+            item("Statistics", #selector(DocumentViewController.showStats(_:)), "2"),
             .separator(),
             item("Show Toolbar", #selector(NSWindow.toggleToolbarShown(_:)), "t", [.command, .option]),
             item("Show Tab Bar", #selector(NSWindow.toggleTabBar(_:))),
@@ -129,10 +134,10 @@ enum MainMenu {
         ])
 
         main.addSubmenu("Query", [
-            item("Run", #selector(DocumentViewController.runQuery(_:)), "\r"),
-            item("Stop", #selector(DocumentViewController.stopQuery(_:)), "."),
+            item("Run", #selector(SQLViewController.runQuery(_:)), "\r"),
+            item("Stop", #selector(SQLViewController.stopQuery(_:)), "."),
             .separator(),
-            item("Insert Template…", #selector(DocumentViewController.showTemplates(_:)), "t", [.command, .shift]),
+            item("Insert Template…", #selector(SQLViewController.showTemplates(_:)), "t", [.command, .shift]),
         ])
 
         let window = main.addSubmenu("Window", [
