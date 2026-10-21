@@ -14,8 +14,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.1.6"
-    CURRENT_PROJECT_VERSION: "10"
+    MARKETING_VERSION: "0.1.7"
+    CURRENT_PROJECT_VERSION: "11"
     # Prototype: ad-hoc signing ("Sign to Run Locally"), no Apple Developer account.
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Manual
