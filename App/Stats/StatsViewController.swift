@@ -314,9 +314,12 @@ final class StatsViewController: NSViewController {
     @objc private func openInSQL(_ sender: Any?) {
         guard let index = selectedColumnIndex else { return }
         let column = workspace.summary.columns[index]
-        var sql = "SELECT \(SQL.identifier(column.name)), count(*) AS n\nFROM \(workspace.tableNameForSQL)"
-        if let scopeFilter { sql += "\nWHERE \(scopeFilter)" }
-        sql += "\nGROUP BY 1\nORDER BY n DESC\nLIMIT 100"
+        var sql = "select\n    \(SQL.identifier(column.name)),\n    count(*) as n\nfrom\n    \(workspace.tableNameForSQL)"
+        if scopeFilter != nil {
+            let conditions = TableSession.filterConditions(dataView().spec, columns: workspace.summary.columns)
+            sql += "\nwhere 1=1" + conditions.map { "\n    and \($0)" }.joined()
+        }
+        sql += "\ngroup by\n    1\norder by\n    n desc\nlimit 100"
         onOpenSQL?(sql)
     }
 

@@ -71,7 +71,7 @@ final class ViewerWindowController: NSWindowController, NSToolbarDelegate {
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, Self.modeItem, .flexibleSpace]
+        [Self.modeItem]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
@@ -80,6 +80,8 @@ final class ViewerWindowController: NSWindowController, NSToolbarDelegate {
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
         item.view = modeControl
         item.label = "Mode"
+        // Leading edge, before the window title — where Finder puts back / forward.
+        item.isNavigational = true
         return item
     }
 }

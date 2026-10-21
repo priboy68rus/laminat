@@ -98,7 +98,7 @@ final class SQLViewController: NSViewController {
         textView.smartInsertDeleteEnabled = false
         textView.textContainerInset = NSSize(width: 6, height: 6)
         textView.delegate = self
-        textView.string = "SELECT *\nFROM \(workspace.tableNameForSQL)\nLIMIT 100"
+        textView.string = SQLTemplate.all[0].sql.replacingOccurrences(of: "{t}", with: workspace.tableNameForSQL)
         if let storage = textView.textStorage { SQLHighlighter.apply(to: storage) }
     }
 

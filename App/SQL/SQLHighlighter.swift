@@ -47,24 +47,77 @@ enum SQLHighlighter {
 }
 
 /// Built-in query templates (SPEC §1.5). `{t}` is replaced with the table name; `⟨…⟩` placeholders are
-/// visited with Tab.
+/// visited with Tab. House style: lowercase keywords, each clause keyword on its own line, its contents
+/// indented by four spaces, `where 1=1` followed by one `and …` per line.
 struct SQLTemplate {
     let title: String
     let sql: String
 
     static let all: [SQLTemplate] = [
-        SQLTemplate(title: "First rows", sql: "SELECT *\nFROM {t}\nLIMIT 100"),
-        SQLTemplate(title: "Row count", sql: "SELECT count(*) AS rows\nFROM {t}"),
-        SQLTemplate(title: "Top values of a column",
-                    sql: "SELECT ⟨column⟩, count(*) AS n\nFROM {t}\nGROUP BY 1\nORDER BY n DESC\nLIMIT 50"),
-        SQLTemplate(title: "Duplicates by key",
-                    sql: "SELECT ⟨key⟩, count(*) AS n\nFROM {t}\nGROUP BY 1\nHAVING count(*) > 1\nORDER BY n DESC"),
-        SQLTemplate(title: "Nulls in a column",
-                    sql: "SELECT count(*) FILTER (WHERE ⟨column⟩ IS NULL) AS nulls,\n       count(*) AS rows\nFROM {t}"),
-        SQLTemplate(title: "Rows per day",
-                    sql: "SELECT date_trunc('day', ⟨timestamp_column⟩) AS day, count(*) AS n\nFROM {t}\nGROUP BY 1\nORDER BY 1"),
-        SQLTemplate(title: "Random sample", sql: "SELECT *\nFROM {t}\nUSING SAMPLE 1000 ROWS"),
-        SQLTemplate(title: "Column summary", sql: "SUMMARIZE {t}"),
-        SQLTemplate(title: "Schema", sql: "DESCRIBE {t}"),
+        SQLTemplate(title: "First rows", sql: """
+            select
+                *
+            from
+                {t}
+            limit 100
+            """),
+        SQLTemplate(title: "Row count", sql: """
+            select
+                count(*) as rows
+            from
+                {t}
+            """),
+        SQLTemplate(title: "Top values of a column", sql: """
+            select
+                ⟨column⟩,
+                count(*) as n
+            from
+                {t}
+            group by
+                1
+            order by
+                n desc
+            limit 50
+            """),
+        SQLTemplate(title: "Duplicates by key", sql: """
+            select
+                ⟨key⟩,
+                count(*) as n
+            from
+                {t}
+            group by
+                1
+            having
+                count(*) > 1
+            order by
+                n desc
+            """),
+        SQLTemplate(title: "Nulls in a column", sql: """
+            select
+                count(*) filter (where ⟨column⟩ is null) as nulls,
+                count(*) as rows
+            from
+                {t}
+            """),
+        SQLTemplate(title: "Rows per day", sql: """
+            select
+                date_trunc('day', ⟨timestamp_column⟩) as day,
+                count(*) as n
+            from
+                {t}
+            group by
+                1
+            order by
+                1
+            """),
+        SQLTemplate(title: "Random sample", sql: """
+            select
+                *
+            from
+                {t}
+            using sample 1000 rows
+            """),
+        SQLTemplate(title: "Column summary", sql: "summarize {t}"),
+        SQLTemplate(title: "Schema", sql: "describe {t}"),
     ]
 }
