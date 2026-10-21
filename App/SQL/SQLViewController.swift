@@ -57,7 +57,7 @@ final class SQLViewController: NSViewController {
 
         overlay.install(in: resultsContainer)
         overlay.onCancel = { [weak self] in self?.stopQuery(nil) }
-        showPlaceholder("Press ⌘↩ to run the query. Every open file is a table (see the list on the left).\nDrop more .parquet files on the list or the editor to join them; press Space on a table to preview it.")
+        showPlaceholder("Press ⌘↩ to run the query. Every open file is a table (see the list on the left).\nDrop more Parquet, CSV, JSON or Excel files on the list or the editor to join them; press Space on a table to preview it.")
 
         // Tables sidebar: inserting names, adding files dropped on the editor.
         addChild(sidebar)
@@ -66,11 +66,11 @@ final class SQLViewController: NSViewController {
             self?.statusLabel.textColor = .systemRed
             self?.statusLabel.stringValue = message
         }
-        textView.onDropFiles = { [weak self] urls in
+        textView.onDropFiles = { [weak self] urls, insertNames in
             // Files dropped into the query become tables; their names go where they were dropped.
-            guard let self else { return nil }
-            let names = sidebar.add(urls).map { Catalog.sqlName($0.name) }
-            return names.isEmpty ? nil : names.joined(separator: ", ")
+            self?.sidebar.add(urls) { entries in
+                if !entries.isEmpty { insertNames(entries.map { Catalog.sqlName($0.name) }.joined(separator: ", ")) }
+            }
         }
 
         split.isVertical = false

@@ -39,7 +39,8 @@ struct ColumnDetails {
 final class StatsCalculator {
     enum Category { case number, temporal, boolean, text, binary, nested, other }
 
-    let url: URL
+    /// The rows: a Parquet file (which also gets the instant footer wave) or an imported table.
+    let tableSource: TableSession.Source
     let columns: [ParquetColumn]
     static let batchSize = 4
     static let histogramBins = 30
@@ -53,10 +54,10 @@ final class StatsCalculator {
     private var generation = 0
     private var running = false
 
-    private var source: String { "read_parquet(\(SQL.string(url.path)))" }
+    private var source: String { tableSource.plainExpression }
 
-    init(database: Database, url: URL, columns: [ParquetColumn]) throws {
-        self.url = url
+    init(database: Database, source: TableSession.Source, columns: [ParquetColumn]) throws {
+        self.tableSource = source
         self.columns = columns
         connection = try Connection(database)
         detailsConnection = try Connection(database)
@@ -90,7 +91,7 @@ final class StatsCalculator {
                 DispatchQueue.main.async { if self.isCurrent(token) { update(stats, completed) } }
             }
 
-            if filter == nil, let footer = try? footerStats(rowCount: rowCount) {
+            if filter == nil, case .parquet(let url) = tableSource, let footer = try? footerStats(url: url, rowCount: rowCount) {
                 deliver(footer, 0)
             }
 
@@ -146,7 +147,7 @@ final class StatsCalculator {
     }
 
     /// Wave 1: null counts and min / max from the row group statistics in the footer.
-    private func footerStats(rowCount: Int) throws -> [Int: ColumnStats] {
+    private func footerStats(url: URL, rowCount: Int) throws -> [Int: ColumnStats] {
         let flat = columns.enumerated().filter { Self.category($0.element) != .nested }
         guard !flat.isEmpty else { return [:] }
 
@@ -243,6 +244,8 @@ final class StatsCalculator {
                     if parts.count == 3 { (stats.p25, stats.median, stats.p75) = (parts[0], parts[1], parts[2]) }
                 }
             }
+            // The approximate distinct count can overshoot on small columns; it can't exceed the values.
+            if let distinct = stats.distinct, let nonNull = stats.nonNull { stats.distinct = min(distinct, nonNull) }
             result[index] = stats
         }
         return result

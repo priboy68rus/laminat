@@ -64,7 +64,7 @@ final class StatsViewController: NSViewController {
 
     init(workspace: Workspace) {
         self.workspace = workspace
-        calculator = try? StatsCalculator(database: workspace.database, url: workspace.url, columns: workspace.summary.columns)
+        calculator = try? StatsCalculator(database: workspace.database, source: workspace.source, columns: workspace.summary.columns)
         super.init(nibName: nil, bundle: nil)
         order = Array(workspace.summary.columns.indices)
     }

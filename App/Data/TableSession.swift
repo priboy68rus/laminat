@@ -57,12 +57,14 @@ final class TableSession {
         case csv = "CSV"
         case parquet = "Parquet"
         case jsonLines = "JSON Lines"
+        case excel = "Excel"
 
         var fileExtension: String {
             switch self {
             case .csv: "csv"
             case .parquet: "parquet"
             case .jsonLines: "jsonl"
+            case .excel: "xlsx"
             }
         }
 
@@ -71,6 +73,7 @@ final class TableSession {
             case .csv: "FORMAT csv, HEADER true"
             case .parquet: "FORMAT parquet, COMPRESSION zstd"
             case .jsonLines: "FORMAT json"
+            case .excel: "FORMAT xlsx, HEADER true"  // Excel itself stops at 1 048 576 rows
             }
         }
     }
@@ -214,6 +217,7 @@ final class TableSession {
                 lock.lock()
                 exportConnection = connection
                 lock.unlock()
+                if format == .excel { try BundledExtensions.load("excel", on: connection) }
                 try connection.execute("COPY (\(exportQuery(for: view))) TO \(SQL.string(url.path)) (\(format.copyOptions))")
                 return Date().timeIntervalSince(start)
             }

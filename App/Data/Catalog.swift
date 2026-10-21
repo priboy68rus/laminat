@@ -1,7 +1,7 @@
 import Foundation
 
-/// The app-wide DuckDB database and the tables queries can use: every open Parquet file, plus files
-/// added to a query (Tables sidebar ＋ / drag and drop). Each table is a view under the file name
+/// The app-wide DuckDB database and the tables queries can use: every open file (Parquet, CSV, JSON,
+/// Excel), plus files added to a query (Tables sidebar ＋ / drag and drop). Each table is a view under the file name
 /// (`name_2`… on a clash) and an alias `t1`, `t2`… A table stays registered while anyone owns it — the
 /// file's window, or a query it was added to — and is dropped when the last owner lets go.
 /// Main thread only.
@@ -19,6 +19,9 @@ final class Catalog {
         let url: URL
         let columns: [ParquetColumn]
         let rowCount: Int
+        /// Where the rows live: the Parquet file itself, or the table a CSV / JSON / Excel file was loaded into.
+        let source: TableSession.Source
+        let importedTable: String?
     }
 
     let database: Database
@@ -41,21 +44,26 @@ final class Catalog {
         owners[Self.key(url)]?.contains(ObjectIdentifier(owner)) ?? false
     }
 
-    /// Makes `url` a table (or adds `owner` to an existing one). Reads only the footer.
+    /// Adds `owner` to the table of an already registered file; nil if the file isn't registered.
+    func retain(_ url: URL, owner: AnyObject) -> TableEntry? {
+        guard let existing = entry(for: url) else { return nil }
+        owners[Self.key(url), default: []].insert(ObjectIdentifier(owner))
+        return existing
+    }
+
+    /// Registers a loaded file as a table owned by `owner` (FileLoader does the reading off the main
+    /// thread). If the file got registered meanwhile, the existing table is reused.
     @discardableResult
-    func register(_ url: URL, owner: AnyObject, summary known: ParquetSummary? = nil) throws -> TableEntry {
-        let key = Self.key(url)
-        if let existing = entry(for: url) {
-            owners[key, default: []].insert(ObjectIdentifier(owner))
+    func register(_ loaded: FileLoader.Loaded, owner: AnyObject) throws -> TableEntry {
+        let connection = try Connection(database)
+        if let existing = retain(loaded.url, owner: owner) {
+            if let table = loaded.importedTable { try? connection.execute("DROP TABLE IF EXISTS \(SQL.identifier(table))") }
             return existing
         }
 
-        let connection = try Connection(database)
-        let summary = try known ?? ParquetFile(url: url, connection: connection).summary()
-
         // File name as the table name; "_2", "_3"… on a clash with a name or alias in use.
         let taken = Set(tables.flatMap { [$0.name.lowercased(), $0.alias.lowercased()] })
-        let base = url.deletingPathExtension().lastPathComponent
+        let base = loaded.url.deletingPathExtension().lastPathComponent
         var name = base
         var suffix = 2
         while taken.contains(name.lowercased())
@@ -66,15 +74,16 @@ final class Catalog {
         let alias = "t\(nextAliasNumber)"
         nextAliasNumber += 1
 
-        let file = "read_parquet(\(SQL.string(url.path)))"
-        try connection.execute("CREATE OR REPLACE VIEW \(SQL.identifier(alias)) AS SELECT * FROM \(file)")
+        try connection.execute("CREATE OR REPLACE VIEW \(SQL.identifier(alias)) AS SELECT * FROM \(loaded.relation)")
         if name.lowercased() != alias.lowercased() {
-            try connection.execute("CREATE OR REPLACE VIEW \(SQL.identifier(name)) AS SELECT * FROM \(file)")
+            try connection.execute("CREATE OR REPLACE VIEW \(SQL.identifier(name)) AS SELECT * FROM \(loaded.relation)")
         }
 
-        let entry = TableEntry(name: name, alias: alias, url: url, columns: summary.columns, rowCount: Int(summary.rowCount))
+        let entry = TableEntry(name: name, alias: alias, url: loaded.url, columns: loaded.summary.columns,
+                               rowCount: Int(loaded.summary.rowCount), source: loaded.source,
+                               importedTable: loaded.importedTable)
         tables.append(entry)
-        owners[key] = [ObjectIdentifier(owner)]
+        owners[Self.key(loaded.url)] = [ObjectIdentifier(owner)]
         NotificationCenter.default.post(name: Self.didChange, object: self)
         return entry
     }
@@ -89,6 +98,7 @@ final class Catalog {
         if let connection = try? Connection(database) {
             try? connection.execute("DROP VIEW IF EXISTS \(SQL.identifier(entry.alias))")
             try? connection.execute("DROP VIEW IF EXISTS \(SQL.identifier(entry.name))")
+            if let table = entry.importedTable { try? connection.execute("DROP TABLE IF EXISTS \(SQL.identifier(table))") }
         }
         NotificationCenter.default.post(name: Self.didChange, object: self)
     }

@@ -35,6 +35,10 @@ targets:
     sources:
       - App
       - Shared
+      # Bundled DuckDB extensions (Contents/Resources/extensions/<arch>/), see scripts/fetch-duckdb.sh.
+      - path: Vendor/duckdb/extensions
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.priboy68rus.laminat
@@ -66,11 +70,35 @@ targets:
             UTTypeTagSpecification:
               public.filename-extension: [parquet]
               public.mime-type: [application/vnd.apache.parquet]
+        # JSON Lines has no system type either; Laminat only reads it, so it is imported.
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: org.jsonlines.jsonl
+            UTTypeDescription: JSON Lines file
+            UTTypeConformsTo: [public.text, public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [jsonl, ndjson]
+        # Parquet: Laminat is the default app. CSV / JSON / Excel: offered in "Open With" only
+        # (Alternate), so double-click stays with Numbers / Excel / the text editor.
         CFBundleDocumentTypes:
           - CFBundleTypeName: Parquet file
             CFBundleTypeRole: Viewer
             LSHandlerRank: Default
             LSItemContentTypes: [org.apache.parquet]
+            NSDocumentClass: $(PRODUCT_MODULE_NAME).ParquetDocument
+          - CFBundleTypeName: CSV file
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.comma-separated-values-text, public.tab-separated-values-text]
+            NSDocumentClass: $(PRODUCT_MODULE_NAME).ParquetDocument
+          - CFBundleTypeName: JSON file
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.json, org.jsonlines.jsonl]
+            NSDocumentClass: $(PRODUCT_MODULE_NAME).ParquetDocument
+          - CFBundleTypeName: Excel workbook
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [org.openxmlformats.spreadsheetml.sheet]
             NSDocumentClass: $(PRODUCT_MODULE_NAME).ParquetDocument
     dependencies:
       - target: LaminatQuickLook

@@ -1,17 +1,21 @@
 # Laminat
 
-A fast, native macOS viewer for Apache Parquet files. No Electron: AppKit + an embedded
-[DuckDB](https://duckdb.org).
+A fast, native macOS viewer for Apache Parquet files — and CSV, JSON and Excel. No Electron: AppKit +
+an embedded [DuckDB](https://duckdb.org).
 
 - **Quick Look** — select a `.parquet` file in Finder and press Space: schema, row count and the first rows.
 - **Finder thumbnails** — `.parquet` icons show a miniature of the table.
 - **Viewer** — double-click a file: a lazily loaded grid that scrolls through millions of rows, sort by
   clicking a column header, filter with the field under each header.
-- **Export** — save the current view or a query result as CSV, Parquet or JSON Lines.
+- **Export** — save the current view or a query result as CSV, Parquet, JSON Lines or Excel.
 - **SQL** — query tabs (⌘N) over all open files with DuckDB SQL (`SELECT … FROM <file name>`), joins
   across files, templates, history and cancellation.
 - **Statistics** — per-column profile: nulls, unique values, min / max, mean, quartiles; histogram and
   top values of a selected column.
+
+Also opens **CSV / TSV, JSON / JSON Lines and Excel (.xlsx)** — via Finder's *Open With* or File → Open
+(double-click stays with your usual app). These are loaded into DuckDB when opened (a 1.5 GB CSV takes
+about a second), then everything works as for Parquet, including joins across formats.
 
 Requires macOS 15 or later (Apple Silicon or Intel).
 

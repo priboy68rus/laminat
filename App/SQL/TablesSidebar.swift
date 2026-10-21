@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// Query tab sidebar: every table in the app-wide catalog (open files plus files added to queries)
 /// with its columns. ＋ or dropping .parquet files adds tables; double-click inserts a name; Space (or
@@ -90,14 +91,17 @@ final class TablesSidebar: NSViewController {
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
 
-        let hint = NSTextField(wrappingLabelWithString: "Every open file is listed here. Drop more .parquet files to join them; Space previews a table.")
+        let hint = NSTextField(wrappingLabelWithString: "Every open file is listed here. Drop more Parquet, CSV, JSON or Excel files to join them; Space previews a table.")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .tertiaryLabelColor
 
         let root = NSVisualEffectView()
         root.material = .sidebar
         root.blendingMode = .behindWindow
-        for v in [title, add, scroll, hint] {
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isDisplayedWhenStopped = false
+        for v in [title, add, scroll, hint, spinner] {
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
         }
@@ -105,6 +109,8 @@ final class TablesSidebar: NSViewController {
             title.topAnchor.constraint(equalTo: root.topAnchor, constant: 10),
             title.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
             add.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+            spinner.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+            spinner.trailingAnchor.constraint(equalTo: add.leadingAnchor, constant: -6),
             add.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
             scroll.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 6),
             scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -131,40 +137,54 @@ final class TablesSidebar: NSViewController {
     @objc private func addFile(_ sender: Any?) {
         guard let window = view.window else { return }
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.init("org.apache.parquet") ?? .data]
+        panel.allowedContentTypes = DataFormat.fileExtensions.compactMap { UTType(filenameExtension: $0) }
         panel.allowsMultipleSelection = true
-        panel.message = "Add Parquet files to this query"
+        panel.message = "Add Parquet, CSV, JSON or Excel files to this query"
         panel.prompt = "Add"
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let self else { return }
-            _ = add(panel.urls)
+            add(panel.urls)
         }
     }
 
-    /// Adds files as tables; returns the entries (existing ones for files already added).
-    @discardableResult
-    func add(_ urls: [URL]) -> [Catalog.TableEntry] {
-        var added: [Catalog.TableEntry] = []
-        for url in urls {
-            do {
-                let entry = try session.addFile(url)
-                added.append(entry)
-            } catch {
-                onError?("Can't add \(url.lastPathComponent): \(error.localizedDescription)")
+    /// Adds files as tables. Parquet and already-open files are immediate; CSV / JSON / Excel load in
+    /// the background. `completion` gets the entries once all of them are in (files that failed to
+    /// load are reported through `onError` and left out).
+    func add(_ urls: [URL], completion: (([Catalog.TableEntry]) -> Void)? = nil) {
+        guard !urls.isEmpty else { completion?([]); return }
+        var results = [Catalog.TableEntry?](repeating: nil, count: urls.count)
+        var remaining = urls.count
+        loadingCount += urls.count
+        for (index, url) in urls.enumerated() {
+            session.addFile(url) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .success(let entry): results[index] = entry
+                case .failure(let error): onError?("Can't add \(url.lastPathComponent): \(error.localizedDescription)")
+                }
+                loadingCount -= 1
+                remaining -= 1
+                guard remaining == 0 else { return }
+                let added = results.compactMap { $0 }
+                reload()
+                if let last = added.last, let item = items.first(where: { $0.entry.alias == last.alias }) {
+                    outline.expandItem(item)
+                    outline.scrollRowToVisible(outline.row(forItem: item))
+                }
+                onTablesChanged?()
+                completion?(added)
             }
         }
-        reload()
-        if let last = added.last, let item = items.first(where: { $0.entry.alias == last.alias }) {
-            outline.expandItem(item)
-            outline.scrollRowToVisible(outline.row(forItem: item))
-        }
-        onTablesChanged?()
-        return added
     }
 
-    static func parquetURLs(from pasteboard: NSPasteboard) -> [URL] {
+    /// Files being loaded right now (shown as a spinner next to the title).
+    private var loadingCount = 0 { didSet { loadingCount > 0 ? spinner.startAnimation(nil) : spinner.stopAnimation(nil) } }
+    private let spinner = NSProgressIndicator()
+
+    /// Supported data files on a drag pasteboard.
+    static func dataFileURLs(from pasteboard: NSPasteboard) -> [URL] {
         let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
-        return urls.filter { $0.pathExtension.lowercased() == "parquet" }
+        return urls.filter { DataFormat(url: $0) != nil }
     }
 
     // MARK: Actions
@@ -212,7 +232,7 @@ final class TablesSidebar: NSViewController {
     /// A popover with the table's grid: lazy paging, sorting and filters work there too.
     private func preview(_ table: TableItem, row: Int) {
         guard row >= 0, let tableSession = try? TableSession(
-            database: Catalog.shared.database, source: .parquet(table.entry.url),
+            database: Catalog.shared.database, source: table.entry.source,
             columns: table.entry.columns, totalRows: table.entry.rowCount) else { NSSound.beep(); return }
         let grid = GridViewController(session: tableSession, details: table.entry.name)
         grid.exportName = table.entry.name
@@ -292,13 +312,15 @@ extension TablesSidebar: NSOutlineViewDataSource, NSOutlineViewDelegate {
     // Dropping .parquet files from Finder anywhere on the list adds them.
     func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?,
                      proposedChildIndex index: Int) -> NSDragOperation {
-        guard !Self.parquetURLs(from: info.draggingPasteboard).isEmpty else { return [] }
+        guard !Self.dataFileURLs(from: info.draggingPasteboard).isEmpty else { return [] }
         outlineView.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex)
         return .copy
     }
 
     func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
-        !add(Self.parquetURLs(from: info.draggingPasteboard)).isEmpty
+        let urls = Self.dataFileURLs(from: info.draggingPasteboard)
+        add(urls)
+        return !urls.isEmpty
     }
 }
 

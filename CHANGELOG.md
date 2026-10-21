@@ -3,6 +3,13 @@
 The section for a version is shown in the in-app update window (scripts/make-appcast.sh), so keep the
 entries short and user-facing.
 
+## 0.1.7
+
+- Opens CSV, TSV, JSON / JSON Lines and Excel (.xlsx) files too: grid, sorting, filters, statistics and SQL
+  work the same as for Parquet. They show up in Finder's Open With; double-click stays with your usual app
+- Join files of different formats in one query; drop any of them on the Tables list
+- Export to Excel (File → Export To → Excel…)
+
 ## 0.1.6
 
 - Queries get their own tabs: File → New Query (⌘N); every open file is a table there, no more switching

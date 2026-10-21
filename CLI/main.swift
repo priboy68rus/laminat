@@ -112,8 +112,8 @@ case "join":
         // Same objects as the app: the first file as an open window, the second added to a query tab.
         let workspace = try Workspace(url: URL(fileURLWithPath: args[1]))
         let query = try QuerySession()
-        let added = try query.addFile(URL(fileURLWithPath: args[2]))
-        let again = try query.addFile(URL(fileURLWithPath: args[2]))
+        let added = try query.addFileSync(URL(fileURLWithPath: args[2]))
+        let again = try query.addFileSync(URL(fileURLWithPath: args[2]))
         print("tables:", Catalog.shared.tables.map { "\($0.name) (\($0.alias))" }.joined(separator: ", "))
         print("re-adding returns the same entry:", again.alias == added.alias, "| window table:", workspace.tableName)
         var done = false

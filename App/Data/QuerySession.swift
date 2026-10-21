@@ -29,11 +29,42 @@ final class QuerySession {
 
     // MARK: Tables
 
-    /// Adds a Parquet file to the catalog on behalf of this query (sidebar ＋ / drag and drop).
+    /// Adds a file (any supported format) to the catalog on behalf of this query (sidebar ＋ / drag and
+    /// drop). Parquet and already-open files are instant; CSV / JSON / Excel are loaded in the background.
+    func addFile(_ url: URL, completion: @escaping (Result<Catalog.TableEntry, Error>) -> Void) {
+        func remember() {
+            if !addedFiles.contains(where: { Catalog.key($0) == Catalog.key(url) }) { addedFiles.append(url) }
+        }
+        if let existing = Catalog.shared.retain(url, owner: self) {
+            remember()
+            completion(.success(existing))
+            return
+        }
+        do {
+            let loader = try FileLoader(url: url)
+            loader.load { [self] result in
+                completion(result.flatMap { loaded in
+                    Result {
+                        let entry = try Catalog.shared.register(loaded, owner: self)
+                        remember()
+                        return entry
+                    }
+                })
+            }
+        } catch {
+            completion(.failure(error))
+        }
+    }
+
+    /// Synchronous variant (CLI).
     @discardableResult
-    func addFile(_ url: URL) throws -> Catalog.TableEntry {
-        let entry = try Catalog.shared.register(url, owner: self)
-        if !addedFiles.contains(where: { Catalog.key($0) == Catalog.key(url) }) { addedFiles.append(url) }
+    func addFileSync(_ url: URL) throws -> Catalog.TableEntry {
+        if let existing = Catalog.shared.retain(url, owner: self) {
+            if !addedFiles.contains(where: { Catalog.key($0) == Catalog.key(url) }) { addedFiles.append(url) }
+            return existing
+        }
+        let entry = try Catalog.shared.register(FileLoader(url: url).loadSync(), owner: self)
+        addedFiles.append(url)
         return entry
     }
 

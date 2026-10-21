@@ -1,24 +1,79 @@
 import AppKit
 
-/// Read-only document: opening a file only reads its footer; data is paged in by the grid. The file
-/// is registered in the app-wide catalog, so every query tab can use it while it is open.
+/// A read-only data file: Parquet, CSV, JSON or Excel. The window opens at once; the file is loaded in
+/// the background (Parquet: footer only; other formats: into a DuckDB table) and registered in the
+/// app-wide catalog, so every query tab can use it while it is open.
 final class ParquetDocument: NSDocument {
     private(set) var workspace: Workspace?
+    private var loader: FileLoader?
 
     override class var autosavesInPlace: Bool { false }
 
     override func read(from url: URL, ofType typeName: String) throws {
-        workspace = try Workspace(url: url)
+        loader = try FileLoader(url: url)  // checks the format; reading happens in the window
     }
 
     override func makeWindowControllers() {
-        guard let workspace else { return }
-        addWindowController(ViewerWindowController(workspace: workspace))
+        guard let loader else { return }
+        let controller = ViewerWindowController(fileName: loader.url.lastPathComponent, format: loader.format)
+        addWindowController(controller)
+        controller.onCancel = { [weak self] in
+            self?.loader?.cancel()
+            self?.close()
+        }
+        loader.load { [weak self, weak controller] result in
+            guard let self, let controller else { return }
+            self.loader = nil
+            switch result {
+            case .success(let loaded):
+                do {
+                    let workspace = try Workspace(loaded)
+                    self.workspace = workspace
+                    controller.show(workspace)
+                } catch {
+                    fail(error)
+                }
+            case .failure(let error):
+                fail(error)
+            }
+        }
+    }
+
+    private func fail(_ error: Error) {
+        if !error.localizedDescription.localizedCaseInsensitiveContains("interrupt") {
+            let alert = NSAlert()
+            alert.messageText = "Can't open \(fileURL?.lastPathComponent ?? "the file")"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
+        close()
     }
 
     override func close() {
         workspace?.close()
+        workspace = nil
         super.close()
+    }
+}
+
+/// Shown while a file loads: the progress overlay with Cancel.
+private final class LoadingViewController: NSViewController {
+    let message: String
+    var onCancel: (() -> Void)?
+    private let overlay = ProgressOverlay(frame: .zero)
+
+    init(message: String) {
+        self.message = message
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func loadView() {
+        view = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 700))
+        overlay.install(in: view)
+        overlay.onCancel = { [weak self] in self?.onCancel?() }
+        overlay.start(message)
     }
 }
 
@@ -67,13 +122,15 @@ enum DocumentWindow {
 
 final class ViewerWindowController: NSWindowController, NSToolbarDelegate {
     private let modeControl = NSSegmentedControl(labels: ["Data", "Stats"], trackingMode: .selectOne, target: nil, action: nil)
-    private let documentController: DocumentViewController
+    private var documentController: DocumentViewController?
+    private let loading: LoadingViewController
+    var onCancel: (() -> Void)? { didSet { loading.onCancel = onCancel } }
     private static let modeItem = NSToolbarItem.Identifier("mode")
     private static let newQueryItem = NSToolbarItem.Identifier("newQuery")
 
-    init(workspace: Workspace) {
-        documentController = DocumentViewController(workspace: workspace)
-        super.init(window: DocumentWindow.make(content: documentController))
+    init(fileName: String, format: DataFormat) {
+        loading = LoadingViewController(message: "Loading \(format.name)…")
+        super.init(window: DocumentWindow.make(content: loading))
         shouldCascadeWindows = true
 
         modeControl.selectedSegment = 0
@@ -81,7 +138,7 @@ final class ViewerWindowController: NSWindowController, NSToolbarDelegate {
         modeControl.action = #selector(modeChanged(_:))
         modeControl.setToolTip("Data (⌘1)", forSegment: 0)
         modeControl.setToolTip("Statistics (⌘2)", forSegment: 1)
-        documentController.onModeChange = { [weak self] mode in self?.modeControl.selectedSegment = mode.rawValue }
+        modeControl.isEnabled = false
 
         let toolbar = NSToolbar(identifier: "viewer")
         toolbar.delegate = self
@@ -96,8 +153,19 @@ final class ViewerWindowController: NSWindowController, NSToolbarDelegate {
         NewTabMenu.show(for: window, sender: sender)
     }
 
+    /// The file finished loading: replace the progress view with the grid.
+    func show(_ workspace: Workspace) {
+        let controller = DocumentViewController(workspace: workspace)
+        controller.onModeChange = { [weak self] mode in self?.modeControl.selectedSegment = mode.rawValue }
+        documentController = controller
+        let frame = window?.frame
+        window?.contentViewController = controller
+        if let frame { window?.setFrame(frame, display: true) }  // keep the size the user saw
+        modeControl.isEnabled = true
+    }
+
     @objc private func modeChanged(_ sender: NSSegmentedControl) {
-        documentController.mode = DocumentViewController.Mode(rawValue: sender.selectedSegment) ?? .data
+        documentController?.mode = DocumentViewController.Mode(rawValue: sender.selectedSegment) ?? .data
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
