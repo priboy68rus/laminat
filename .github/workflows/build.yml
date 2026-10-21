@@ -11,14 +11,22 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    # The macOS 26+ SDK is what gives the app the current system design (Liquid Glass); an older SDK
+    # makes macOS show it in the legacy look.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
       - name: Toolchain
         run: |
-          xcodebuild -version
-          sw_vers
+          XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          SDK=$(xcrun --sdk macosx --show-sdk-version)
+          echo "::notice::$(xcodebuild -version | tr '\n' ' ') — macOS SDK $SDK ($XCODE)"
+          if [[ "${SDK%%.*}" -lt 26 ]]; then
+            echo "::error::macOS SDK $SDK is older than 26: the app would use the legacy design"
+            exit 1
+          fi
           brew install xcodegen
 
       - name: Package
