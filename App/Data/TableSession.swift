@@ -43,6 +43,36 @@ final class TableSession {
             case .table: "rowid"
             }
         }
+
+        /// The relation without the extra row-number column, for export.
+        var plainExpression: String {
+            switch self {
+            case .parquet(let url): "read_parquet(\(SQL.string(url.path)))"
+            case .table(let name): SQL.identifier(name)
+            }
+        }
+    }
+
+    enum ExportFormat: String, CaseIterable {
+        case csv = "CSV"
+        case parquet = "Parquet"
+        case jsonLines = "JSON Lines"
+
+        var fileExtension: String {
+            switch self {
+            case .csv: "csv"
+            case .parquet: "parquet"
+            case .jsonLines: "jsonl"
+            }
+        }
+
+        var copyOptions: String {
+            switch self {
+            case .csv: "FORMAT csv, HEADER true"
+            case .parquet: "FORMAT parquet, COMPRESSION zstd"
+            case .jsonLines: "FORMAT json"
+            }
+        }
     }
 
     struct View {
@@ -72,6 +102,10 @@ final class TableSession {
     private let pageQueue = DispatchQueue(label: "laminat.pages", qos: .userInitiated)
     private let buildQueue = DispatchQueue(label: "laminat.build", qos: .userInitiated)
 
+    private let exportQueue = DispatchQueue(label: "laminat.export", qos: .userInitiated)
+    private var exportConnection: Connection?
+    private let database: Database
+
     private let lock = NSLock()
     private var latestBuildID = 0
     private var buildingID: Int?
@@ -85,6 +119,7 @@ final class TableSession {
         self.source = source
         self.columns = columns
         self.totalRows = totalRows
+        self.database = database
         pageConnection = try Connection(database)
         buildConnection = try Connection(database)
     }
@@ -165,6 +200,47 @@ final class TableSession {
             result[column] = rows.map { $0[position] }
         }
         return result
+    }
+
+    // MARK: Export
+
+    /// Writes every row and column of `view` (in view order, full values, original types) to `url`.
+    /// Runs in the background; `cancelExport()` interrupts it. Completion on the main queue.
+    func export(_ view: View, to url: URL, format: ExportFormat, completion: @escaping (Result<TimeInterval, Error>) -> Void) {
+        exportQueue.async { [self] in
+            let start = Date()
+            let result = Result {
+                let connection = try exportConnection ?? Connection(database)
+                lock.lock()
+                exportConnection = connection
+                lock.unlock()
+                try connection.execute("COPY (\(exportQuery(for: view))) TO \(SQL.string(url.path)) (\(format.copyOptions))")
+                return Date().timeIntervalSince(start)
+            }
+            if case .failure = result { try? FileManager.default.removeItem(at: url) }  // no half-written files
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    func cancelExport() {
+        lock.lock()
+        let connection = exportConnection
+        lock.unlock()
+        connection?.interrupt()
+    }
+
+    private func exportQuery(for view: View) -> String {
+        guard let indexTable = view.indexTable else {
+            if case .table = source { return "SELECT * FROM \(source.plainExpression) ORDER BY rowid" }
+            return "SELECT * FROM \(source.plainExpression)"
+        }
+        // Join the rows to the sort / filter index and keep the index order.
+        let exclude = if case .parquet = source { " EXCLUDE (file_row_number)" } else { "" }
+        return """
+            SELECT s.*\(exclude) FROM \(source.expression) s
+            JOIN \(SQL.identifier(indexTable)) i ON s.\(source.rowID) = i.r
+            ORDER BY i.rowid
+            """
     }
 
     // MARK: Views

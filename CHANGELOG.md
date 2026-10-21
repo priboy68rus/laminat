@@ -3,6 +3,13 @@
 The section for a version is shown in the in-app update window (scripts/make-appcast.sh), so keep the
 entries short and user-facing.
 
+## 0.1.3
+
+- Export: File → Export To → CSV, Parquet or JSON Lines (the current view with sort and filters, or a query result)
+- Standard macOS menus: Undo, Cut, Copy, Paste and Find (⌘F, ⌘G) in the SQL editor, Help menu with search
+- Data / SQL / Stats switch moved to the left of the title, like Finder's back and forward buttons
+- SQL templates use a cleaner layout
+
 ## 0.1.2
 
 - Automatic updates: Laminat checks for new versions daily (Laminat → Check for Updates…)

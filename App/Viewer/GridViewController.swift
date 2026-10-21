@@ -6,6 +6,10 @@ final class GridViewController: NSViewController {
     let session: TableSession
     /// Extra status bar text after the row and column counts (e.g. file size, query time).
     var details: String? { didSet { if isViewLoaded { updateStatus() } } }
+    /// Suggested file name (without extension) for File → Export.
+    var exportName = "export"
+    private var exportNotice: String?
+    private var isExporting = false
 
     private var currentView: TableSession.View
     /// Sort and filters currently applied (not just typed).
@@ -167,6 +171,8 @@ final class GridViewController: NSViewController {
         menu.addItem(withTitle: "Copy Value", action: #selector(copyValue(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Copy Rows", action: #selector(copy(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Copy Column Name", action: #selector(copyColumnName(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Export…", action: #selector(exportData(_:)), keyEquivalent: "")
         tableView.menu = menu
     }
 
@@ -345,6 +351,7 @@ final class GridViewController: NSViewController {
                 currentView = newView
                 session.dropView(old)
                 lastBuildDuration = buildStartedAt.map { Date().timeIntervalSince($0) }
+                exportNotice = nil
                 finishBuild()
                 pages = [:]
                 pageOrder = []
@@ -404,10 +411,77 @@ final class GridViewController: NSViewController {
         }
         if buildStartedAt != nil {
             parts.append(spec.sort != currentView.spec.sort ? "sorting…" : "filtering…")
+        } else if let exportNotice {
+            parts.append(exportNotice)
         } else if let lastBuildDuration {
             parts.append(String(format: "%.2f s", lastBuildDuration))
         }
         statusLabel.stringValue = parts.joined(separator: " · ")
+    }
+
+    // MARK: Export
+
+    /// File → Export… (⌘⇧E): the current view — sort and filters applied, all columns, full values.
+    @objc func exportData(_ sender: Any?) {
+        guard !isExporting, let window = view.window else { NSSound.beep(); return }
+        let panel = NSSavePanel()
+        let formatPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        formatPopup.addItems(withTitles: TableSession.ExportFormat.allCases.map(\.rawValue))
+        // File → Export To → <format> passes the format as the item's tag; otherwise use the last one.
+        let lastUsed = TableSession.ExportFormat(rawValue: UserDefaults.standard.string(forKey: "LaminatExportFormat") ?? "") ?? .csv
+        let tag = (sender as? NSMenuItem)?.tag ?? -1
+        let selected = TableSession.ExportFormat.allCases.indices.contains(tag) && (sender as? NSMenuItem)?.menu?.title == "Export To"
+            ? TableSession.ExportFormat.allCases[tag] : lastUsed
+        formatPopup.selectItem(withTitle: selected.rawValue)
+
+        let label = NSTextField(labelWithString: "Format:")
+        let accessory = NSStackView(views: [label, formatPopup])
+        accessory.edgeInsets = NSEdgeInsets(top: 8, left: 16, bottom: 8, right: 16)
+        panel.accessoryView = accessory
+        panel.nameFieldStringValue = "\(exportName).\(selected.fileExtension)"
+        panel.canCreateDirectories = true
+        panel.message = "Exports \(format(currentView.rowCount)) rows × \(session.columns.count) columns"
+            + (currentView.spec.isIdentity ? "" : " (current sort and filters)")
+
+        // Keep the file extension in sync with the chosen format.
+        let observer = NotificationCenter.default.addObserver(forName: NSMenu.didSendActionNotification,
+                                                              object: formatPopup.menu, queue: .main) { _ in
+            let format = TableSession.ExportFormat.allCases[formatPopup.indexOfSelectedItem]
+            let base = (panel.nameFieldStringValue as NSString).deletingPathExtension
+            panel.nameFieldStringValue = "\(base).\(format.fileExtension)"
+        }
+
+        panel.beginSheetModal(for: window) { [weak self] response in
+            NotificationCenter.default.removeObserver(observer)
+            guard let self, response == .OK, let url = panel.url else { return }
+            let format = TableSession.ExportFormat.allCases[formatPopup.indexOfSelectedItem]
+            UserDefaults.standard.set(format.rawValue, forKey: "LaminatExportFormat")
+            startExport(to: url, format: format)
+        }
+    }
+
+    private func startExport(to url: URL, format exportFormat: TableSession.ExportFormat) {
+        isExporting = true
+        exportNotice = nil
+        errorText = nil
+        let rows = currentView.rowCount
+        overlay.onCancel = { [weak self] in self?.session.cancelExport() }
+        overlay.start("Exporting \(exportFormat.rawValue)…")
+        session.export(currentView, to: url, format: exportFormat) { [weak self] result in
+            guard let self else { return }
+            isExporting = false
+            overlay.stop()
+            overlay.onCancel = nil
+            switch result {
+            case .success(let duration):
+                exportNotice = "exported \(format(rows)) rows to \(url.lastPathComponent) in " + String(format: "%.1f s", duration)
+            case .failure(let error) where error.localizedDescription.localizedCaseInsensitiveContains("interrupt"):
+                exportNotice = "export cancelled"
+            case .failure(let error):
+                errorText = "Export failed: " + error.localizedDescription
+            }
+            updateStatus()
+        }
     }
 
     // MARK: Copy
@@ -459,7 +533,10 @@ final class GridViewController: NSViewController {
         writeToPasteboard(session.columns[column].name)
     }
 
-    @objc func focusFilter(_ sender: Any?) {
+    /// Edit → Find → Find… (⌘F) in a grid jumps to the column filters.
+    @objc override func performTextFinderAction(_ sender: Any?) {
+        guard (sender as? NSMenuItem)?.tag ?? NSTextFinder.Action.showFindInterface.rawValue
+                == NSTextFinder.Action.showFindInterface.rawValue else { return }
         let selectedColumn = tableView.clickedColumn > 0 ? tableView.clickedColumn - 1 : 0
         header.focusField(column: selectedColumn)
     }
@@ -484,6 +561,10 @@ extension GridViewController: NSMenuItemValidation {
                 && value(tableView.clickedRow, tableView.clickedColumn - 1) != nil
         case #selector(copyColumnName(_:)):
             return tableView.clickedColumn > 0
+        case #selector(exportData(_:)):
+            return !isExporting && buildStartedAt == nil
+        case #selector(performTextFinderAction(_:)):
+            return item.tag == NSTextFinder.Action.showFindInterface.rawValue
         default:
             return true
         }

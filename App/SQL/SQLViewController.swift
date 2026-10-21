@@ -97,6 +97,8 @@ final class SQLViewController: NSViewController {
         textView.isGrammarCheckingEnabled = false
         textView.smartInsertDeleteEnabled = false
         textView.textContainerInset = NSSize(width: 6, height: 6)
+        textView.usesFindBar = true  // Edit → Find (⌘F, ⌘G…) like any macOS text editor
+        textView.isIncrementalSearchingEnabled = true
         textView.delegate = self
         textView.string = SQLTemplate.all[0].sql.replacingOccurrences(of: "{t}", with: workspace.tableNameForSQL)
         if let storage = textView.textStorage { SQLHighlighter.apply(to: storage) }
@@ -190,6 +192,13 @@ final class SQLViewController: NSViewController {
         if run { runQuery(nil) }
     }
 
+    /// File → Export… while the editor has focus: export the current result.
+    var canExportResult: Bool { resultGrid != nil && !isRunning }
+
+    @objc func exportResult(_ sender: Any?) {
+        resultGrid?.exportData(sender)
+    }
+
     /// ⌘⇧T: pop up the templates menu.
     @objc func showTemplates(_ sender: Any?) {
         templatesButton.performClick(nil)
@@ -269,6 +278,7 @@ final class SQLViewController: NSViewController {
         statusLabel.stringValue = "\(result.rowCount.formatted()) row\(result.rowCount == 1 ? "" : "s") · " + details
 
         let grid = GridViewController(session: result.session, details: details)
+        grid.exportName = "\(workspace.tableName)_query"
         setResultView(grid.view, controller: grid)
         if let previous = currentResult { workspace.dropResult(previous) }
         currentResult = result

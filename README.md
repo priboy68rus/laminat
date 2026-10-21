@@ -7,6 +7,7 @@ A fast, native macOS viewer for Apache Parquet files. No Electron: AppKit + an e
 - **Finder thumbnails** — `.parquet` icons show a miniature of the table.
 - **Viewer** — double-click a file: a lazily loaded grid that scrolls through millions of rows, sort by
   clicking a column header, filter with the field under each header.
+- **Export** — save the current view or a query result as CSV, Parquet or JSON Lines.
 - **SQL** — query the file with DuckDB SQL (`SELECT … FROM <file name>` or `FROM t1`), with templates,
   history and cancellation.
 - **Statistics** — per-column profile: nulls, unique values, min / max, mean, quartiles; histogram and
@@ -40,8 +41,11 @@ System Settings → General → Login Items & Extensions → Quick Look, then ru
 | ⎋ | Cancel a running query |
 | ⌘T | Open a file in a new tab |
 | ⌘⇧T | Insert a query template |
-| ⌘F | Focus the column filters |
+| ⌘F | Find: column filters in the grid, find bar in the SQL editor |
 | ⌘C | Copy selected rows as TSV |
+
+**File → Export To → CSV / Parquet / JSON Lines** saves what the current tab shows — the file with its
+sort and filters applied, or the SQL result — with full values and all columns.
 
 In SQL the file is available under its file name without the extension and as `t1`. Only read-only
 statements run (SELECT, WITH, DESCRIBE, SUMMARIZE, …); results are capped at 1 000 000 rows.

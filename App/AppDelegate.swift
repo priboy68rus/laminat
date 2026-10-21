@@ -24,24 +24,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         return true
     }
 
+    @objc func showHelp(_ sender: Any?) {
+        NSWorkspace.shared.open(URL(string: "https://github.com/priboy68rus/laminat#readme")!)
+    }
+
     /// ⌘T with no window open: same as Open.
     @objc func newWindowForTab(_ sender: Any?) {
         NSDocumentController.shared.openDocument(sender)
     }
 }
 
+/// Main menu laid out like native macOS apps (Finder, Numbers, Xcode): standard items, titles and
+/// shortcuts, plus View → Data / SQL / Statistics and a Query menu.
 enum MainMenu {
     static func make(updater: SPUStandardUpdaterController) -> NSMenu {
         let appName = ProcessInfo.processInfo.processName
         let main = NSMenu()
 
+        let services = NSMenu(title: "Services")
+        NSApp.servicesMenu = services
+        let servicesItem = NSMenuItem(title: "Services", action: nil, keyEquivalent: "")
+        servicesItem.submenu = services
+        let checkForUpdates = item("Check for Updates…", #selector(SPUStandardUpdaterController.checkForUpdates(_:)))
+        checkForUpdates.target = updater
+
         main.addSubmenu(appName, [
             item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
-            {
-                let check = item("Check for Updates…", #selector(SPUStandardUpdaterController.checkForUpdates(_:)))
-                check.target = updater
-                return check
-            }(),
+            checkForUpdates,
+            .separator(),
+            servicesItem,
             .separator(),
             item("Hide \(appName)", #selector(NSApplication.hide(_:)), "h"),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
@@ -57,6 +68,16 @@ enum MainMenu {
         let recentItem = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
         recentItem.submenu = recent
 
+        // File → Export To ▸, as in Numbers and Pages. The item's tag picks the format in the save panel.
+        let exportMenu = NSMenu(title: "Export To")
+        for (index, format) in TableSession.ExportFormat.allCases.enumerated() {
+            let exportItem = item("\(format.rawValue)…", #selector(GridViewController.exportData(_:)))
+            exportItem.tag = index
+            exportMenu.addItem(exportItem)
+        }
+        let exportItem = NSMenuItem(title: "Export To", action: nil, keyEquivalent: "")
+        exportItem.submenu = exportMenu
+
         main.addSubmenu("File", [
             // ⌘T like Finder and Terminal: pick a file and open it as a new tab.
             item("New Tab…", #selector(NSResponder.newWindowForTab(_:)), "t"),
@@ -64,13 +85,35 @@ enum MainMenu {
             recentItem,
             .separator(),
             item("Close", #selector(NSWindow.performClose(_:)), "w"),
+            .separator(),
+            exportItem,
         ])
 
+        let find = NSMenu(title: "Find")
+        for (title, key, modifiers, action) in [
+            ("Find…", "f", NSEvent.ModifierFlags.command, NSTextFinder.Action.showFindInterface),
+            ("Find Next", "g", .command, .nextMatch),
+            ("Find Previous", "g", [.command, .shift], .previousMatch),
+            ("Use Selection for Find", "e", .command, .setSearchString),
+        ] {
+            let findItem = item(title, #selector(NSResponder.performTextFinderAction(_:)), key, modifiers)
+            findItem.tag = action.rawValue
+            find.addItem(findItem)
+        }
+        let findItem = NSMenuItem(title: "Find", action: nil, keyEquivalent: "")
+        findItem.submenu = find
+
         main.addSubmenu("Edit", [
-            item("Copy", #selector(GridViewController.copy(_:)), "c"),
+            item("Undo", Selector(("undo:")), "z"),
+            item("Redo", Selector(("redo:")), "z", [.command, .shift]),
+            .separator(),
+            item("Cut", #selector(NSText.cut(_:)), "x"),
+            item("Copy", #selector(NSText.copy(_:)), "c"),
+            item("Paste", #selector(NSText.paste(_:)), "v"),
+            item("Delete", #selector(NSText.delete(_:))),
             item("Select All", #selector(NSResponder.selectAll(_:)), "a"),
             .separator(),
-            item("Filter…", #selector(GridViewController.focusFilter(_:)), "f"),
+            findItem,
         ])
 
         main.addSubmenu("View", [
@@ -78,6 +121,7 @@ enum MainMenu {
             item("SQL", #selector(DocumentViewController.showSQL(_:)), "2"),
             item("Statistics", #selector(DocumentViewController.showStats(_:)), "3"),
             .separator(),
+            item("Show Toolbar", #selector(NSWindow.toggleToolbarShown(_:)), "t", [.command, .option]),
             item("Show Tab Bar", #selector(NSWindow.toggleTabBar(_:))),
             item("Show All Tabs", #selector(NSWindow.toggleTabOverview(_:)), "\\", [.command, .shift]),
             .separator(),
@@ -103,6 +147,11 @@ enum MainMenu {
             item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:))),
         ])
         NSApp.windowsMenu = window
+
+        let help = main.addSubmenu("Help", [
+            item("\(appName) Help", #selector(AppDelegate.showHelp(_:)), "?"),
+        ])
+        NSApp.helpMenu = help  // adds the system menu search field
 
         return main
     }

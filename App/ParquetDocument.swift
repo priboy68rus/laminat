@@ -94,9 +94,13 @@ final class DocumentViewController: NSViewController {
     var onModeChange: ((Mode) -> Void)?
     var mode: Mode = .data { didSet { if mode != oldValue { showMode() } } }
 
-    private lazy var dataGrid = GridViewController(
-        session: workspace.fileSession,
-        details: ByteCountFormatter.string(fromByteCount: workspace.summary.fileSize, countStyle: .file))
+    private lazy var dataGrid: GridViewController = {
+        let grid = GridViewController(
+            session: workspace.fileSession,
+            details: ByteCountFormatter.string(fromByteCount: workspace.summary.fileSize, countStyle: .file))
+        grid.exportName = workspace.tableName
+        return grid
+    }()
     private lazy var sqlController = SQLViewController(workspace: workspace)
     private lazy var statsController: StatsViewController = {
         let controller = StatsViewController(workspace: workspace)
@@ -139,6 +143,15 @@ final class DocumentViewController: NSViewController {
         onModeChange?(mode)
     }
 
+    /// File → Export… when no grid is first responder: export what the current tab shows.
+    @objc func exportData(_ sender: Any?) {
+        switch mode {
+        case .data: dataGrid.exportData(sender)
+        case .sql: sqlController.exportResult(sender)
+        case .stats: NSSound.beep()
+        }
+    }
+
     @objc func showData(_ sender: Any?) { mode = .data }
     @objc func showSQL(_ sender: Any?) { mode = .sql }
     @objc func showStats(_ sender: Any?) { mode = .stats }
@@ -164,6 +177,7 @@ extension DocumentViewController: NSMenuItemValidation {
         case #selector(showSQL(_:)): item.state = mode == .sql ? .on : .off
         case #selector(showStats(_:)): item.state = mode == .stats ? .on : .off
         case #selector(runQuery(_:)), #selector(stopQuery(_:)): return sqlController.validateMenuItem(item)
+        case #selector(exportData(_:)): return mode == .data || (mode == .sql && sqlController.canExportResult)
         default: break
         }
         return true
