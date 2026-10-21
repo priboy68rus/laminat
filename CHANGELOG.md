@@ -9,6 +9,7 @@ entries short and user-facing.
   between a file's tabs and views
 - File tabs show Data and Stats (⌘1 / ⌘2)
 - Press Space on a table in the query sidebar to preview it, like Quick Look
+- The + in the tab bar offers Open File… or New Query
 
 ## 0.1.5
 

@@ -22,6 +22,27 @@ final class ParquetDocument: NSDocument {
     }
 }
 
+/// What the tab bar's "+" offers. Clicked with the mouse it pops up a menu — Open File… / New Query;
+/// from the keyboard (⌘T, File → New Tab…) it opens a file straight away, like Finder and Terminal.
+enum NewTabMenu {
+    static func show(for window: NSWindow?, sender: Any?) {
+        guard let window, let event = NSApp.currentEvent, event.type == .leftMouseDown || event.type == .leftMouseUp,
+              let frameView = window.contentView?.superview else {
+            NSDocumentController.shared.openDocument(sender)
+            return
+        }
+        let menu = NSMenu()
+        let open = menu.addItem(withTitle: "Open File…", action: #selector(NSDocumentController.openDocument(_:)), keyEquivalent: "t")
+        open.target = NSDocumentController.shared
+        let query = menu.addItem(withTitle: "New Query", action: #selector(AppDelegate.newQuery(_:)), keyEquivalent: "n")
+        query.target = NSApp.delegate
+        query.image = NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: nil)
+        open.image = NSImage(systemSymbolName: "doc", accessibilityDescription: nil)
+        let point = frameView.convert(event.locationInWindow, from: nil)
+        menu.popUp(positioning: nil, at: point, in: frameView)
+    }
+}
+
 /// Shared window setup for file and query tabs: same size and one system tab group.
 enum DocumentWindow {
     static func make(content: NSViewController) -> NSWindow {
@@ -70,9 +91,9 @@ final class ViewerWindowController: NSWindowController, NSToolbarDelegate {
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
-    /// The "+" button in the tab bar: open another file as a new tab.
+    /// The "+" button in the tab bar (or ⌘T): open a file or a query as a new tab.
     override func newWindowForTab(_ sender: Any?) {
-        NSDocumentController.shared.openDocument(sender)
+        NewTabMenu.show(for: window, sender: sender)
     }
 
     @objc private func modeChanged(_ sender: NSSegmentedControl) {
