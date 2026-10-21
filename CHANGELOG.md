@@ -3,6 +3,10 @@
 The section for a version is shown in the in-app update window (scripts/make-appcast.sh), so keep the
 entries short and user-facing.
 
+## 0.1.4
+
+- Current macOS 26 design (Liquid Glass): release builds now use the macOS 26 SDK
+
 ## 0.1.3
 
 - Export: File → Export To → CSV, Parquet or JSON Lines (the current view with sort and filters, or a query result)
