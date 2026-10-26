@@ -3,6 +3,11 @@
 The section for a version is shown in the in-app update window (scripts/make-appcast.sh), so keep the
 entries short and user-facing.
 
+## 0.1.9
+
+- Laminat reopens where you left off after quitting: query tabs come back with their SQL and added files,
+  file tabs with their Data / Stats mode, sheet, sort, filters and scroll position
+
 ## 0.1.8
 
 - Excel workbooks with several sheets: every sheet opens, with a sheet bar at the bottom of the window like

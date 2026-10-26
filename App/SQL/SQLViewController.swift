@@ -6,6 +6,20 @@ import AppKit
 final class SQLViewController: NSViewController {
     let session: QuerySession
     private let initialSQL: String
+    /// The text or the cursor changed (the window then refreshes its restorable state).
+    var onTextChange: (() -> Void)?
+
+    /// Editor contents and cursor, for restoring the tab after quitting.
+    var queryText: String { textView.string }
+    var selection: NSRange {
+        get { textView.selectedRange() }
+        set {
+            let length = (textView.string as NSString).length
+            let location = min(newValue.location, length)
+            textView.setSelectedRange(NSRange(location: location, length: min(newValue.length, length - location)))
+            textView.scrollRangeToVisible(textView.selectedRange())
+        }
+    }
 
     private let split = NSSplitView()
     private let outerSplit = NSSplitView()
@@ -375,7 +389,12 @@ final class SQLViewController: NSViewController {
 }
 
 extension SQLViewController: NSTextViewDelegate {
+    func textViewDidChangeSelection(_ notification: Notification) {
+        onTextChange?()
+    }
+
     func textDidChange(_ notification: Notification) {
+        onTextChange?()
         if let storage = textView.textStorage { SQLHighlighter.apply(to: storage) }
     }
 

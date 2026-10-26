@@ -17,7 +17,64 @@ final class GridViewController: NSViewController {
     var appliedRowCount: Int { currentView.rowCount }
     /// Called after a new sort / filter has been applied.
     var onViewChange: (() -> Void)?
+    /// Called when anything a restored window should bring back changes (sort, filters, scroll).
+    var onStateChange: (() -> Void)?
     private var spec = ViewSpec()
+    /// Row to scroll to once the restored view is ready.
+    private var pendingTopRow: Int?
+
+    /// What a window brings back after the app quits: sort and filters (by column name, so a changed
+    /// file degrades gracefully) and the first visible row.
+    struct SavedState: Codable {
+        var sortColumn: String?
+        var ascending = true
+        var filters: [String: String] = [:]
+        var topRow = 0
+    }
+
+    var savedState: SavedState {
+        let columns = session.columns
+        var state = SavedState()
+        if let sort = spec.sort, columns.indices.contains(sort.column) {
+            state.sortColumn = columns[sort.column].name
+            state.ascending = sort.ascending
+        }
+        for (index, text) in spec.activeFilters where columns.indices.contains(index) {
+            state.filters[columns[index].name] = text
+        }
+        if isViewLoaded { state.topRow = max(0, tableView.rows(in: tableView.visibleRect).location) }
+        return state
+    }
+
+    func restore(_ state: SavedState) {
+        _ = view
+        let index = Dictionary(session.columns.enumerated().map { ($1.name, $0) }, uniquingKeysWith: { first, _ in first })
+        var restored = ViewSpec()
+        if let name = state.sortColumn, let column = index[name] {
+            restored.sort = .init(column: column, ascending: state.ascending)
+        }
+        for (name, text) in state.filters {
+            guard let column = index[name] else { continue }
+            restored.filters[column] = text
+            header.setFilterText(text, column: column)
+        }
+        spec = restored
+        updateSortIndicators()
+        pendingTopRow = state.topRow
+        if spec.isIdentity {
+            scrollToPendingRow()
+        } else {
+            applySpec()
+        }
+    }
+
+    private func scrollToPendingRow() {
+        guard let row = pendingTopRow, isViewLoaded else { return }
+        pendingTopRow = nil
+        guard row > 0, row < currentView.rowCount else { return }
+        tableView.scroll(NSPoint(x: 0, y: CGFloat(row) * tableView.rowHeight))
+        requestVisiblePages()
+    }
 
     // Cache (main thread only): page → the columns loaded for it. Only visible columns (plus a
     // margin) are fetched; the rest come in as the user scrolls sideways.
@@ -185,6 +242,7 @@ final class GridViewController: NSViewController {
 
     @objc private func visibleAreaChanged(_ note: Notification) {
         requestVisiblePages()
+        onStateChange?()
     }
 
     private func pageCount(for view: TableSession.View) -> Int {
@@ -361,7 +419,9 @@ final class GridViewController: NSViewController {
                 tableView.reloadData()
                 tableView.scrollRowToVisible(0)
                 requestVisiblePages()
+                scrollToPendingRow()
                 onViewChange?()
+                onStateChange?()
             case .failure(let error):
                 guard requested == spec else { return }
                 errorText = error.localizedDescription

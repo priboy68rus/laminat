@@ -51,6 +51,11 @@ final class FilterHeaderView: NSTableHeaderView {
 
     var firstField: NSSearchField? { fields.values.min { $0.tag < $1.tag } }
 
+    /// Puts text into a column's filter field without firing the filter (used when restoring a window).
+    func setFilterText(_ text: String, column: Int) {
+        fields.values.first { $0.tag == column }?.stringValue = text
+    }
+
     @objc private func fieldAction(_ sender: NSSearchField) {
         let commit = NSApp.currentEvent?.type == .keyDown
         onFilterChange?(sender.tag, sender.stringValue, commit)

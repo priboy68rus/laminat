@@ -115,10 +115,13 @@ enum DocumentWindow {
     }
 }
 
-final class ViewerWindowController: NSWindowController, NSToolbarDelegate {
+final class ViewerWindowController: NSWindowController, NSToolbarDelegate, NSWindowDelegate {
     private let modeControl = NSSegmentedControl(labels: ["Data", "Stats"], trackingMode: .selectOne, target: nil, action: nil)
     private var documentController: DocumentViewController?
     private let loading: LoadingViewController
+    /// View state decoded at launch, applied once the file has loaded.
+    private var pendingState: DocumentViewController.SavedState?
+    private static let stateKey = "LaminatFileState"
     var onCancel: (() -> Void)? { didSet { loading.onCancel = onCancel } }
     private static let modeItem = NSToolbarItem.Identifier("mode")
     private static let newQueryItem = NSToolbarItem.Identifier("newQuery")
@@ -134,6 +137,9 @@ final class ViewerWindowController: NSWindowController, NSToolbarDelegate {
         modeControl.setToolTip("Data (⌘1)", forSegment: 0)
         modeControl.setToolTip("Statistics (⌘2)", forSegment: 1)
         modeControl.isEnabled = false
+        // The document system restores the window and its file after quitting; the delegate adds the
+        // view state (mode, sheet, sort, filters, scroll).
+        window?.delegate = self
 
         let toolbar = NSToolbar(identifier: "viewer")
         toolbar.delegate = self
@@ -157,6 +163,23 @@ final class ViewerWindowController: NSWindowController, NSToolbarDelegate {
         window?.contentViewController = controller
         if let frame { window?.setFrame(frame, display: true) }  // keep the size the user saw
         modeControl.isEnabled = true
+        if let pendingState {
+            self.pendingState = nil
+            controller.restore(pendingState)
+        }
+        controller.onStateChange = { [weak self] in self?.window?.invalidateRestorableState() }
+    }
+
+    func window(_ window: NSWindow, willEncodeRestorableState state: NSCoder) {
+        guard let saved = documentController?.savedState ?? pendingState,
+              let data = try? JSONEncoder().encode(saved) else { return }
+        state.encode(data, forKey: Self.stateKey)
+    }
+
+    func window(_ window: NSWindow, didDecodeRestorableState state: NSCoder) {
+        guard let data = state.decodeObject(of: NSData.self, forKey: Self.stateKey) as Data?,
+              let saved = try? JSONDecoder().decode(DocumentViewController.SavedState.self, from: data) else { return }
+        if let documentController { documentController.restore(saved) } else { pendingState = saved }
     }
 
     @objc private func modeChanged(_ sender: NSSegmentedControl) {
@@ -196,7 +219,27 @@ final class DocumentViewController: NSViewController {
 
     let workspace: Workspace
     var onModeChange: ((Mode) -> Void)?
+    /// Something a restored window should bring back changed (mode, sheet, sort, filters, scroll).
+    var onStateChange: (() -> Void)?
     var mode: Mode = .data { didSet { if mode != oldValue { showContent() } } }
+
+    /// Restorable state of the window (SPEC: restore after quitting).
+    struct SavedState: Codable {
+        var mode = Mode.data.rawValue
+        var sheet = 0
+        var grid: GridViewController.SavedState?
+    }
+
+    var savedState: SavedState {
+        SavedState(mode: mode.rawValue, sheet: workspace.currentSheet, grid: grids[workspace.currentSheet]?.savedState)
+    }
+
+    func restore(_ state: SavedState) {
+        if workspace.sheets.indices.contains(state.sheet) { workspace.currentSheet = state.sheet }
+        mode = Mode(rawValue: state.mode) ?? .data
+        showContent()
+        if let gridState = state.grid { grid(for: workspace.currentSheet).restore(gridState) }
+    }
 
     /// Grid and statistics of each sheet, created when the sheet is first shown.
     private var grids: [Int: GridViewController] = [:]
@@ -312,6 +355,7 @@ final class DocumentViewController: NSViewController {
         var details = ByteCountFormatter.string(fromByteCount: workspace.fileSize, countStyle: .file)
         if let name = sheet.name, workspace.sheets.count > 1 { details = "sheet \(name) · " + details }
         let grid = GridViewController(session: sheet.session, details: details)
+        grid.onStateChange = { [weak self] in self?.onStateChange?() }
         let base = workspace.url.deletingPathExtension().lastPathComponent
         grid.exportName = sheet.name.map { "\(base)_\($0)" } ?? base
         grids[index] = grid
@@ -343,6 +387,7 @@ final class DocumentViewController: NSViewController {
         for button in sheetButtons { button.state = button.tag == index ? .on : .off }
         if mode == .data { view.window?.makeFirstResponder(next.view) }
         onModeChange?(mode)
+        onStateChange?()
     }
 
     /// File → Export To when no grid is first responder: export the current sheet's data view.
