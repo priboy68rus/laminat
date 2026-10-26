@@ -7,6 +7,8 @@ entries short and user-facing.
 
 - Excel workbooks with several sheets: every sheet opens, with a sheet bar at the bottom of the window like
   in Excel; in SQL they are book.Sheet (e.g. sales.Orders) and the Tables list groups them under the workbook
+- Query tabs get the same toolbar as file tabs (Run / Stop on the left, New Query on the right), so switching
+  tabs no longer shifts the window content
 
 ## 0.1.7
 

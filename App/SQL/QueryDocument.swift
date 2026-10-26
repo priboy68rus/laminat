@@ -75,12 +75,46 @@ final class QueryDocument: NSDocument {
 
 /// Keeps the Query and File → Export To commands working when nothing in the tab has focus: the window
 /// controller is in the responder chain even when the editor isn't.
-final class QueryWindowController: NSWindowController, NSMenuItemValidation {
+final class QueryWindowController: NSWindowController, NSMenuItemValidation, NSToolbarDelegate {
     private let sql: SQLViewController
+    private static let runItem = NSToolbarItem.Identifier("run")
+    private static let newQueryItem = NSToolbarItem.Identifier("newQuery")
 
     init(window: NSWindow, sql: SQLViewController) {
         self.sql = sql
         super.init(window: window)
+        // Same toolbar layout as a file tab (control on the leading edge, New Query on the right), so the
+        // window keeps its height and content doesn't jump when switching between files and queries.
+        let toolbar = NSToolbar(identifier: "query")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        window.toolbar = toolbar
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.flexibleSpace, Self.runItem, Self.newQueryItem]
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [Self.runItem, .flexibleSpace, Self.newQueryItem]
+    }
+
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        switch itemIdentifier {
+        case Self.runItem:
+            let stack = NSStackView(views: [sql.runButton, sql.stopButton])
+            stack.spacing = 6
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.view = stack
+            item.label = "Run"
+            item.isNavigational = true  // leading edge, where a file tab has Data / Stats
+            return item
+        case Self.newQueryItem:
+            return DocumentWindow.newQueryItem(itemIdentifier)
+        default:
+            return nil
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }

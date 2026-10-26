@@ -77,8 +77,24 @@ private final class LoadingViewController: NSViewController {
     }
 }
 
-/// Shared window setup for file and query tabs: same size and one system tab group.
+/// Shared window setup for file and query tabs: same size, the same toolbar layout (a control on the
+/// leading edge, New Query on the right, so switching tabs doesn't shift the content) and one tab group.
 enum DocumentWindow {
+    /// The New Query toolbar button. Icon and title live in the button itself: an icon-only toolbar
+    /// hides item labels.
+    static func newQueryItem(_ identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
+        let button = NSButton(title: "New Query",
+                              image: NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: nil)!,
+                              target: nil, action: #selector(AppDelegate.newQuery(_:)))
+        button.imagePosition = .imageLeading
+        button.bezelStyle = .toolbar
+        button.toolTip = "New Query (⌘N) — SQL over all open files"
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.view = button
+        item.label = "New Query"
+        return item
+    }
+
     static func make(content: NSViewController) -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 700),
@@ -165,15 +181,7 @@ final class ViewerWindowController: NSWindowController, NSToolbarDelegate {
             // Leading edge, before the window title — where Finder puts back / forward.
             item.isNavigational = true
         case Self.newQueryItem:
-            // Icon and title in the button itself: an icon-only toolbar hides item labels.
-            let button = NSButton(title: "New Query",
-                                  image: NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: nil)!,
-                                  target: nil, action: #selector(AppDelegate.newQuery(_:)))
-            button.imagePosition = .imageLeading
-            button.bezelStyle = .toolbar
-            button.toolTip = "New Query (⌘N) — SQL over all open files"
-            item.view = button
-            item.label = "New Query"
+            return DocumentWindow.newQueryItem(itemIdentifier)
         default:
             return nil
         }

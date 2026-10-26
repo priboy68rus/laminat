@@ -12,8 +12,9 @@ final class SQLViewController: NSViewController {
     private lazy var sidebar = TablesSidebar(session: session)
     private let textView: SQLTextView
     private let editorScroll: NSScrollView
-    private let runButton = NSButton(title: "Run", target: nil, action: nil)
-    private let stopButton = NSButton(title: "Stop", target: nil, action: nil)
+    /// Run / Stop live in the window toolbar (QueryWindowController), like Xcode's run button.
+    let runButton = NSButton(title: "Run", target: nil, action: nil)
+    let stopButton = NSButton(title: "Stop", target: nil, action: nil)
     private let templatesButton = NSPopUpButton(frame: .zero, pullsDown: true)
     private let historyButton = NSPopUpButton(frame: .zero, pullsDown: true)
     private let spinner = NSProgressIndicator()
@@ -131,14 +132,14 @@ final class SQLViewController: NSViewController {
     }
 
     private func makeBar() -> NSView {
-        runButton.bezelStyle = .rounded
+        runButton.bezelStyle = .toolbar
         runButton.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: nil)
         runButton.imagePosition = .imageLeading
         runButton.target = self
         runButton.action = #selector(runQuery(_:))
         runButton.toolTip = "Run (⌘↩)"
 
-        stopButton.bezelStyle = .rounded
+        stopButton.bezelStyle = .toolbar
         stopButton.image = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: nil)
         stopButton.imagePosition = .imageLeading
         stopButton.target = self
@@ -168,7 +169,7 @@ final class SQLViewController: NSViewController {
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
-        let stack = NSStackView(views: [runButton, stopButton, templatesButton, historyButton, spacer, spinner, statusLabel])
+        let stack = NSStackView(views: [templatesButton, historyButton, spacer, spinner, statusLabel])
         stack.orientation = .horizontal
         stack.spacing = 8
         return stack
