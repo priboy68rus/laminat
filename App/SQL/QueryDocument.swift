@@ -65,11 +65,11 @@ final class QueryDocument: NSDocument {
 
     /// `select * from <table> limit 100` for the file whose tab is in front (or any open file).
     private static func defaultSQL() -> String {
-        let front = (NSDocumentController.shared.currentDocument as? ParquetDocument)?.workspace?.tableName
-        guard let name = front ?? Catalog.shared.tables.first?.name else {
-            return "-- Open .parquet files or drop them on the Tables list, then query them by name.\n"
+        let front = (NSDocumentController.shared.currentDocument as? ParquetDocument)?.workspace?.current.sqlName
+        guard let name = front ?? Catalog.shared.tables.first?.sqlName else {
+            return "-- Open files or drop them on the Tables list, then query them by name.\n"
         }
-        return SQLTemplate.all[0].sql.replacingOccurrences(of: "{t}", with: Catalog.sqlName(name))
+        return SQLTemplate.all[0].sql.replacingOccurrences(of: "{t}", with: name)
     }
 }
 

@@ -13,7 +13,7 @@ an embedded [DuckDB](https://duckdb.org).
 - **Statistics** — per-column profile: nulls, unique values, min / max, mean, quartiles; histogram and
   top values of a selected column.
 
-Also opens **CSV / TSV, JSON / JSON Lines and Excel (.xlsx)** — via Finder's *Open With* or File → Open
+Also opens **CSV / TSV, JSON / JSON Lines and Excel (.xlsx, every sheet)** — via Finder's *Open With* or File → Open
 (double-click stays with your usual app). These are loaded into DuckDB when opened (a 1.5 GB CSV takes
 about a second), then everything works as for Parquet, including joins across formats.
 
@@ -90,7 +90,8 @@ build/Build/Products/Debug/laminat-cli exec "COPY (SELECT * FROM range(10)) TO '
 ### Test data
 
 `scripts/make-testdata.sh` generates large files into `testdata/` (not committed): 30M rows / 1.7 GB and
-501 columns.
+501 columns. `samples/workbook.xlsx` (3 sheets) was made with `scripts/make-workbook.py`, which merges
+single-sheet .xlsx files written by DuckDB.
 
 ### Release
 

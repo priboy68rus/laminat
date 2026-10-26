@@ -181,28 +181,22 @@ final class ViewerWindowController: NSWindowController, NSToolbarDelegate {
     }
 }
 
-/// File window content: the data grid or the statistics.
+/// File window content: the data grid or the statistics of the current sheet, and — for workbooks with
+/// several sheets — a sheet bar along the bottom, like Excel's.
 final class DocumentViewController: NSViewController {
     enum Mode: Int { case data, stats }
 
     let workspace: Workspace
     var onModeChange: ((Mode) -> Void)?
-    var mode: Mode = .data { didSet { if mode != oldValue { showMode() } } }
+    var mode: Mode = .data { didSet { if mode != oldValue { showContent() } } }
 
-    private lazy var dataGrid: GridViewController = {
-        let grid = GridViewController(
-            session: workspace.fileSession,
-            details: ByteCountFormatter.string(fromByteCount: workspace.summary.fileSize, countStyle: .file))
-        grid.exportName = workspace.tableName
-        return grid
-    }()
-    private lazy var statsController: StatsViewController = {
-        let controller = StatsViewController(workspace: workspace)
-        controller.dataView = { [unowned self] in (dataGrid.appliedSpec, dataGrid.appliedRowCount) }
-        controller.onOpenSQL = { sql in QueryDocument.open(sql: sql, run: true) }
-        dataGrid.onViewChange = { [weak controller] in controller?.dataViewChanged() }
-        return controller
-    }()
+    /// Grid and statistics of each sheet, created when the sheet is first shown.
+    private var grids: [Int: GridViewController] = [:]
+    private var stats: [Int: StatsViewController] = [:]
+
+    private let contentView = NSView()
+    private let sheetBar = NSStackView()
+    private var sheetButtons: [NSButton] = []
 
     init(workspace: Workspace) {
         self.workspace = workspace
@@ -212,28 +206,141 @@ final class DocumentViewController: NSViewController {
     required init?(coder: NSCoder) { fatalError("not used") }
 
     override func loadView() {
-        view = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 700))
-        showMode()
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 700))
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(contentView)
+
+        if workspace.sheets.count > 1 {
+            let bar = makeSheetBar()
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            root.addSubview(bar)
+            NSLayoutConstraint.activate([
+                contentView.topAnchor.constraint(equalTo: root.topAnchor),
+                contentView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+                contentView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+                contentView.bottomAnchor.constraint(equalTo: bar.topAnchor),
+                bar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+                bar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+                bar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+                bar.heightAnchor.constraint(equalToConstant: 30),
+            ])
+        } else {
+            NSLayoutConstraint.activate([
+                contentView.topAnchor.constraint(equalTo: root.topAnchor),
+                contentView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+                contentView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+                contentView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            ])
+        }
+        view = root
+        showContent()
     }
 
-    private func showMode() {
-        let next: NSViewController = mode == .data ? dataGrid : statsController
+    /// Sheet buttons in a horizontally scrolling strip, the selected one highlighted.
+    private func makeSheetBar() -> NSView {
+        let container = NSVisualEffectView()
+        container.material = .titlebar
+        container.blendingMode = .withinWindow
+
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.translatesAutoresizingMaskIntoConstraints = false
+
+        sheetBar.orientation = .horizontal
+        sheetBar.spacing = 2
+        sheetBar.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+        for (index, sheet) in workspace.sheets.enumerated() {
+            let button = NSButton(title: sheet.name ?? "Sheet \(index + 1)", target: self, action: #selector(sheetClicked(_:)))
+            button.bezelStyle = .accessoryBarAction
+            button.setButtonType(.pushOnPushOff)
+            button.controlSize = .small
+            button.tag = index
+            button.toolTip = "\(sheet.sqlName) — \(sheet.entry.rowCount.formatted()) rows × \(sheet.entry.columns.count) columns"
+            sheetButtons.append(button)
+            sheetBar.addArrangedSubview(button)
+        }
+        let count = NSTextField(labelWithString: "\(workspace.sheets.count) sheets")
+        count.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        count.textColor = .tertiaryLabelColor
+        sheetBar.addArrangedSubview(count)
+
+        let scroll = NSScrollView()
+        scroll.documentView = sheetBar
+        scroll.hasHorizontalScroller = false
+        scroll.drawsBackground = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        sheetBar.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(divider)
+        container.addSubview(scroll)
+        NSLayoutConstraint.activate([
+            divider.topAnchor.constraint(equalTo: container.topAnchor),
+            divider.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: divider.bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            sheetBar.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            sheetBar.bottomAnchor.constraint(equalTo: scroll.contentView.bottomAnchor),
+            sheetBar.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+        ])
+        return container
+    }
+
+    @objc private func sheetClicked(_ sender: NSButton) {
+        selectSheet(sender.tag)
+    }
+
+    func selectSheet(_ index: Int) {
+        guard workspace.sheets.indices.contains(index) else { return }
+        workspace.currentSheet = index
+        showContent()
+    }
+
+    private func grid(for index: Int) -> GridViewController {
+        if let grid = grids[index] { return grid }
+        let sheet = workspace.sheets[index]
+        var details = ByteCountFormatter.string(fromByteCount: workspace.fileSize, countStyle: .file)
+        if let name = sheet.name, workspace.sheets.count > 1 { details = "sheet \(name) · " + details }
+        let grid = GridViewController(session: sheet.session, details: details)
+        let base = workspace.url.deletingPathExtension().lastPathComponent
+        grid.exportName = sheet.name.map { "\(base)_\($0)" } ?? base
+        grids[index] = grid
+        return grid
+    }
+
+    private func statsController(for index: Int) -> StatsViewController {
+        if let controller = stats[index] { return controller }
+        let grid = grid(for: index)
+        let controller = StatsViewController(workspace: workspace, sheet: workspace.sheets[index])
+        controller.dataView = { [unowned grid] in (grid.appliedSpec, grid.appliedRowCount) }
+        controller.onOpenSQL = { sql in QueryDocument.open(sql: sql, run: true) }
+        grid.onViewChange = { [weak controller] in controller?.dataViewChanged() }
+        stats[index] = controller
+        return controller
+    }
+
+    private func showContent() {
+        let index = workspace.currentSheet
+        let next: NSViewController = mode == .data ? grid(for: index) : statsController(for: index)
         children.forEach { child in
             child.view.removeFromSuperview()
             child.removeFromParent()
         }
         addChild(next)
-        next.view.frame = view.bounds
+        next.view.frame = contentView.bounds
         next.view.autoresizingMask = [.width, .height]
-        view.addSubview(next.view)
+        contentView.addSubview(next.view)
+        for button in sheetButtons { button.state = button.tag == index ? .on : .off }
         if mode == .data { view.window?.makeFirstResponder(next.view) }
         onModeChange?(mode)
     }
 
-    /// File → Export To when no grid is first responder: export the data view.
+    /// File → Export To when no grid is first responder: export the current sheet's data view.
     @objc func exportData(_ sender: Any?) {
         guard mode == .data else { NSSound.beep(); return }
-        dataGrid.exportData(sender)
+        grid(for: workspace.currentSheet).exportData(sender)
     }
 
     @objc func showData(_ sender: Any?) { mode = .data }

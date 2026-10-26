@@ -3,6 +3,11 @@
 The section for a version is shown in the in-app update window (scripts/make-appcast.sh), so keep the
 entries short and user-facing.
 
+## 0.1.8
+
+- Excel workbooks with several sheets: every sheet opens, with a sheet bar at the bottom of the window like
+  in Excel; in SQL they are book.Sheet (e.g. sales.Orders) and the Tables list groups them under the workbook
+
 ## 0.1.7
 
 - Opens CSV, TSV, JSON / JSON Lines and Excel (.xlsx) files too: grid, sorting, filters, statistics and SQL

@@ -62,11 +62,15 @@ final class StatsViewController: NSViewController {
         StatColumn(id: "avglen", title: "Avg length", width: 80, numeric: true) { s, _, _ in s.avgLength.map(Format.number) },
     ]
 
-    init(workspace: Workspace) {
+    /// The table this tab profiles (a workbook has one Stats view per sheet).
+    let sheet: Workspace.Sheet
+
+    init(workspace: Workspace, sheet: Workspace.Sheet) {
         self.workspace = workspace
-        calculator = try? StatsCalculator(database: workspace.database, source: workspace.source, columns: workspace.summary.columns)
+        self.sheet = sheet
+        calculator = try? StatsCalculator(database: workspace.database, source: sheet.source, columns: sheet.summary.columns)
         super.init(nibName: nil, bundle: nil)
-        order = Array(workspace.summary.columns.indices)
+        order = Array(sheet.summary.columns.indices)
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -271,8 +275,8 @@ final class StatsViewController: NSViewController {
         let data = dataView()
         let useFilter = scopeControl.selectedSegment == 1 && !data.spec.activeFilters.isEmpty
         if !useFilter { scopeControl.selectedSegment = 0 }
-        scopeFilter = useFilter ? TableSession.filterConditions(data.spec, columns: workspace.summary.columns).joined(separator: " AND ") : nil
-        scopeRows = useFilter ? data.rowCount : Int(workspace.summary.rowCount)
+        scopeFilter = useFilter ? TableSession.filterConditions(data.spec, columns: sheet.summary.columns).joined(separator: " AND ") : nil
+        scopeRows = useFilter ? data.rowCount : Int(sheet.summary.rowCount)
 
         hasRun = true
         isStale = false
@@ -282,7 +286,7 @@ final class StatsViewController: NSViewController {
         tableView.reloadData()
         refreshDetails()
 
-        let total = workspace.summary.columns.count
+        let total = sheet.summary.columns.count
         calculator.run(filter: scopeFilter, rowCount: scopeRows, update: { [weak self] update, completed in
             guard let self else { return }
             stats.merge(update) { old, new in new.isComplete || !old.isComplete ? new : old }
@@ -313,10 +317,10 @@ final class StatsViewController: NSViewController {
 
     @objc private func openInSQL(_ sender: Any?) {
         guard let index = selectedColumnIndex else { return }
-        let column = workspace.summary.columns[index]
-        var sql = "select\n    \(SQL.identifier(column.name)),\n    count(*) as n\nfrom\n    \(workspace.tableNameForSQL)"
+        let column = sheet.summary.columns[index]
+        var sql = "select\n    \(SQL.identifier(column.name)),\n    count(*) as n\nfrom\n    \(sheet.sqlName)"
         if scopeFilter != nil {
-            let conditions = TableSession.filterConditions(dataView().spec, columns: workspace.summary.columns)
+            let conditions = TableSession.filterConditions(dataView().spec, columns: sheet.summary.columns)
             sql += "\nwhere 1=1" + conditions.map { "\n    and \($0)" }.joined()
         }
         sql += "\ngroup by\n    1\norder by\n    n desc\nlimit 100"
@@ -330,7 +334,7 @@ final class StatsViewController: NSViewController {
         for row in rows where order.indices.contains(row) {
             let index = order[row]
             let s = stats[index] ?? ColumnStats()
-            lines.append(statColumns.map { $0.value(s, workspace.summary.columns[index], scopeRows) ?? "" }.joined(separator: "\t"))
+            lines.append(statColumns.map { $0.value(s, sheet.summary.columns[index], scopeRows) ?? "" }.joined(separator: "\t"))
         }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
@@ -350,7 +354,7 @@ final class StatsViewController: NSViewController {
 
     private func applyOrder() {
         let selected = selectedColumnIndex
-        let columns = workspace.summary.columns
+        let columns = sheet.summary.columns
         var indices = Array(columns.indices)
         if !nameFilter.isEmpty {
             indices = indices.filter { columns[$0].name.lowercased().contains(nameFilter) }
@@ -392,7 +396,7 @@ final class StatsViewController: NSViewController {
         case "median": s.median
         case "p75": s.p75
         case "avglen": s.avgLength
-        default: statColumn.value(s, workspace.summary.columns[index], scopeRows)
+        default: statColumn.value(s, sheet.summary.columns[index], scopeRows)
         }
         guard let raw else { return .missing }
         return Double(raw).map(SortValue.number) ?? .text(raw)
@@ -416,7 +420,7 @@ final class StatsViewController: NSViewController {
             setDetailsVisible(false)
             return
         }
-        let column = workspace.summary.columns[index]
+        let column = sheet.summary.columns[index]
         detailsTitle.stringValue = "\(column.name)  ·  \(column.type)"
         openSQLButton.isHidden = false
         detailsSpinner.startAnimation(nil)
@@ -462,8 +466,8 @@ extension StatsViewController: NSTableViewDataSource, NSTableViewDelegate {
 
         let index = order[row]
         let s = stats[index]
-        if let value = s.flatMap({ statColumn.value($0, workspace.summary.columns[index], scopeRows) })
-            ?? (["name", "type"].contains(statColumn.id) ? statColumn.value(ColumnStats(), workspace.summary.columns[index], scopeRows) : nil) {
+        if let value = s.flatMap({ statColumn.value($0, sheet.summary.columns[index], scopeRows) })
+            ?? (["name", "type"].contains(statColumn.id) ? statColumn.value(ColumnStats(), sheet.summary.columns[index], scopeRows) : nil) {
             cell.text = value
             cell.style = statColumn.numeric ? .number : .value
         } else if isRunning && !(s?.isComplete ?? false) {

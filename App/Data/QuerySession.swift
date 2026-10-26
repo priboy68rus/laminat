@@ -30,8 +30,9 @@ final class QuerySession {
     // MARK: Tables
 
     /// Adds a file (any supported format) to the catalog on behalf of this query (sidebar ＋ / drag and
-    /// drop). Parquet and already-open files are instant; CSV / JSON / Excel are loaded in the background.
-    func addFile(_ url: URL, completion: @escaping (Result<Catalog.TableEntry, Error>) -> Void) {
+    /// drop) and returns its tables (one per sheet for a workbook). Parquet and already-open files are
+    /// instant; CSV / JSON / Excel are loaded in the background.
+    func addFile(_ url: URL, completion: @escaping (Result<[Catalog.TableEntry], Error>) -> Void) {
         func remember() {
             if !addedFiles.contains(where: { Catalog.key($0) == Catalog.key(url) }) { addedFiles.append(url) }
         }
@@ -45,9 +46,9 @@ final class QuerySession {
             loader.load { [self] result in
                 completion(result.flatMap { loaded in
                     Result {
-                        let entry = try Catalog.shared.register(loaded, owner: self)
+                        let entries = try Catalog.shared.register(loaded, owner: self)
                         remember()
-                        return entry
+                        return entries
                     }
                 })
             }
@@ -58,14 +59,14 @@ final class QuerySession {
 
     /// Synchronous variant (CLI).
     @discardableResult
-    func addFileSync(_ url: URL) throws -> Catalog.TableEntry {
+    func addFileSync(_ url: URL) throws -> [Catalog.TableEntry] {
         if let existing = Catalog.shared.retain(url, owner: self) {
             if !addedFiles.contains(where: { Catalog.key($0) == Catalog.key(url) }) { addedFiles.append(url) }
             return existing
         }
-        let entry = try Catalog.shared.register(FileLoader(url: url).loadSync(), owner: self)
+        let entries = try Catalog.shared.register(FileLoader(url: url).loadSync(), owner: self)
         addedFiles.append(url)
-        return entry
+        return entries
     }
 
     func removeFile(_ url: URL) {

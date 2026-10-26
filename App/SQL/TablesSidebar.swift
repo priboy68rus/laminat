@@ -1,9 +1,9 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// Query tab sidebar: every table in the app-wide catalog (open files plus files added to queries)
-/// with its columns. ＋ or dropping .parquet files adds tables; double-click inserts a name; Space (or
-/// Preview) shows the first rows in a popover, like Quick Look.
+/// Query tab sidebar: every table in the app-wide catalog (open files plus files added to queries) with
+/// its columns; a workbook is a group with one table per sheet (`book.Sheet`). ＋ or dropping files adds
+/// tables; double-click inserts a name; Space (or Preview) shows the first rows in a popover.
 final class TablesSidebar: NSViewController {
     let session: QuerySession
     /// Inserts text at the editor's cursor.
@@ -29,7 +29,21 @@ final class TablesSidebar: NSViewController {
         init(column: ParquetColumn) { self.column = column }
     }
 
-    private var items: [TableItem] = []
+    /// A workbook: its sheets are the children.
+    private final class SchemaItem {
+        let name: String
+        let url: URL
+        let tables: [TableItem]
+        init(name: String, url: URL, tables: [TableItem]) {
+            self.name = name
+            self.url = url
+            self.tables = tables
+        }
+    }
+
+    /// Top level: single-table files (TableItem) and workbooks (SchemaItem), in catalog order.
+    private var roots: [AnyObject] = []
+    private var tableItems: [TableItem] { roots.flatMap { ($0 as? SchemaItem)?.tables ?? [$0 as! TableItem] } }
 
     init(session: QuerySession) {
         self.session = session
@@ -46,11 +60,12 @@ final class TablesSidebar: NSViewController {
         if let catalogObserver { NotificationCenter.default.removeObserver(catalogObserver) }
     }
 
-    /// Name of the table selected in the list (or owning the selected column), for templates.
+    /// SQL name of the table selected in the list (or owning the selected column), for templates.
     var selectedTableName: String? {
         let item = outline.item(atRow: outline.selectedRow)
-        if let table = item as? TableItem { return table.entry.name }
-        if let column = item, let parent = outline.parent(forItem: column) as? TableItem { return parent.entry.name }
+        if let table = item as? TableItem { return table.entry.sqlName }
+        if let schema = item as? SchemaItem { return schema.tables.first?.entry.sqlName }
+        if let column = item, let parent = outline.parent(forItem: column) as? TableItem { return parent.entry.sqlName }
         return nil
     }
 
@@ -65,7 +80,7 @@ final class TablesSidebar: NSViewController {
                            target: self, action: #selector(addFile(_:)))
         add.bezelStyle = .accessoryBarAction
         add.isBordered = false
-        add.toolTip = "Add a Parquet file (or drop files here)"
+        add.toolTip = "Add a Parquet, CSV, JSON or Excel file (or drop files here)"
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("main"))
         outline.addTableColumn(column)
@@ -122,14 +137,26 @@ final class TablesSidebar: NSViewController {
         ])
         view = root
         reload()
-        if items.count == 1 { outline.expandItem(items.first) }
+        if roots.count == 1 { outline.expandItem(roots.first) }
     }
 
     func reload() {
-        let expanded = Set(items.filter { outline.isItemExpanded($0) }.map(\.entry.alias))
-        items = Catalog.shared.tables.map(TableItem.init)
+        func key(_ item: AnyObject) -> String {
+            (item as? TableItem)?.entry.alias ?? "schema:" + ((item as? SchemaItem)?.name ?? "")
+        }
+        let expanded = Set((roots + tableItems).filter { outline.isItemExpanded($0) }.map(key))
+
+        var built: [AnyObject] = []
+        var seenSchemas = Set<String>()
+        for entry in Catalog.shared.tables {
+            guard let schema = entry.schema else { built.append(TableItem(entry)); continue }
+            guard seenSchemas.insert(schema).inserted else { continue }
+            let sheets = Catalog.shared.tables.filter { $0.schema == schema }.map(TableItem.init)
+            built.append(SchemaItem(name: schema, url: entry.url, tables: sheets))
+        }
+        roots = built
         outline.reloadData()
-        for item in items where expanded.contains(item.entry.alias) { outline.expandItem(item) }
+        for item in roots + tableItems where expanded.contains(key(item)) { outline.expandItem(item) }
     }
 
     // MARK: Adding files
@@ -152,27 +179,32 @@ final class TablesSidebar: NSViewController {
     /// load are reported through `onError` and left out).
     func add(_ urls: [URL], completion: (([Catalog.TableEntry]) -> Void)? = nil) {
         guard !urls.isEmpty else { completion?([]); return }
-        var results = [Catalog.TableEntry?](repeating: nil, count: urls.count)
+        var results = [[Catalog.TableEntry]](repeating: [], count: urls.count)
         var remaining = urls.count
         loadingCount += urls.count
         for (index, url) in urls.enumerated() {
             session.addFile(url) { [weak self] result in
                 guard let self else { return }
                 switch result {
-                case .success(let entry): results[index] = entry
+                case .success(let entries): results[index] = entries
                 case .failure(let error): onError?("Can't add \(url.lastPathComponent): \(error.localizedDescription)")
                 }
                 loadingCount -= 1
                 remaining -= 1
                 guard remaining == 0 else { return }
-                let added = results.compactMap { $0 }
                 reload()
-                if let last = added.last, let item = items.first(where: { $0.entry.alias == last.alias }) {
-                    outline.expandItem(item)
-                    outline.scrollRowToVisible(outline.row(forItem: item))
+                // Expand what was added last: the workbook (to show its sheets) or the table.
+                if let last = results.last(where: { !$0.isEmpty })?.first {
+                    let item: AnyObject? = last.schema.flatMap { name in self.roots.first { ($0 as? SchemaItem)?.name == name } }
+                        ?? tableItems.first { $0.entry.alias == last.alias }
+                    if let item {
+                        outline.expandItem(item)
+                        outline.scrollRowToVisible(outline.row(forItem: item))
+                    }
                 }
                 onTablesChanged?()
-                completion?(added)
+                // For a workbook, its first sheet stands for the file (e.g. a name dropped into the query).
+                completion?(results.compactMap(\.first))
             }
         }
     }
@@ -192,7 +224,9 @@ final class TablesSidebar: NSViewController {
     @objc private func doubleClicked(_ sender: Any?) {
         let item = outline.item(atRow: outline.clickedRow)
         if let table = item as? TableItem {
-            onInsert?(Catalog.sqlName(table.entry.name))
+            onInsert?(table.entry.sqlName)
+        } else if let schema = item as? SchemaItem {
+            onInsert?(Catalog.sqlName(schema.name))
         } else if let column = item as? ColumnItem {
             onInsert?(Catalog.sqlName(column.column.name))
         }
@@ -201,10 +235,16 @@ final class TablesSidebar: NSViewController {
     @objc private func insertName(_ sender: NSMenuItem) {
         let item = outline.item(atRow: outline.clickedRow)
         if let table = item as? TableItem {
-            onInsert?(Catalog.sqlName(sender.tag == 1 ? table.entry.alias : table.entry.name))
+            onInsert?(sender.tag == 1 ? table.entry.alias : table.entry.sqlName)
+        } else if let schema = item as? SchemaItem {
+            onInsert?(Catalog.sqlName(schema.name))
         } else if let column = item as? ColumnItem {
             onInsert?(Catalog.sqlName(column.column.name))
         }
+    }
+
+    private func fileURL(of item: Any?) -> URL? {
+        (item as? TableItem)?.entry.url ?? (item as? SchemaItem)?.url
     }
 
     // MARK: Preview (Space, like Quick Look)
@@ -224,6 +264,8 @@ final class TablesSidebar: NSViewController {
         if item is ColumnItem, let parent = outline.parent(forItem: item) as? TableItem {
             item = parent
             row = outline.row(forItem: parent)
+        } else if let schema = item as? SchemaItem, let first = schema.tables.first {
+            item = first  // a workbook previews its first sheet
         }
         guard let table = item as? TableItem else { return }
         preview(table, row: row)
@@ -248,13 +290,13 @@ final class TablesSidebar: NSViewController {
     }
 
     @objc private func revealInFinder(_ sender: Any?) {
-        guard let table = outline.item(atRow: outline.clickedRow) as? TableItem else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([table.entry.url])
+        guard let url = fileURL(of: outline.item(atRow: outline.clickedRow)) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     @objc private func removeTable(_ sender: Any?) {
-        guard let table = outline.item(atRow: outline.clickedRow) as? TableItem, session.owns(table.entry.url) else { return }
-        session.removeFile(table.entry.url)  // the catalog notifies, which reloads the list
+        guard let url = fileURL(of: outline.item(atRow: outline.clickedRow)), session.owns(url) else { return }
+        session.removeFile(url)  // the catalog notifies, which reloads the list
     }
 }
 
@@ -275,6 +317,14 @@ extension TablesSidebar: NSMenuDelegate {
                 menu.addItem(.separator())
                 menu.addItem(withTitle: "Remove from This Query", action: #selector(removeTable(_:)), keyEquivalent: "").target = self
             }
+        } else if let schema = item as? SchemaItem {
+            menu.addItem(withTitle: "Insert Name", action: #selector(insertName(_:)), keyEquivalent: "").target = self
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Show in Finder", action: #selector(revealInFinder(_:)), keyEquivalent: "").target = self
+            if session.owns(schema.url) {
+                menu.addItem(.separator())
+                menu.addItem(withTitle: "Remove from This Query", action: #selector(removeTable(_:)), keyEquivalent: "").target = self
+            }
         } else if item is ColumnItem {
             menu.addItem(withTitle: "Insert Name", action: #selector(insertName(_:)), keyEquivalent: "").target = self
         }
@@ -283,25 +333,31 @@ extension TablesSidebar: NSMenuDelegate {
 
 extension TablesSidebar: NSOutlineViewDataSource, NSOutlineViewDelegate {
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-        if item == nil { return items.count }
+        if item == nil { return roots.count }
+        if let schema = item as? SchemaItem { return schema.tables.count }
         return (item as? TableItem)?.columns.count ?? 0
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-        if item == nil { return items[index] }
+        if item == nil { return roots[index] }
+        if let schema = item as? SchemaItem { return schema.tables[index] }
         return (item as! TableItem).columns[index]
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-        item is TableItem
+        item is TableItem || item is SchemaItem
     }
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
-        let identifier = NSUserInterfaceItemIdentifier(item is TableItem ? "table" : "column")
+        let identifier = NSUserInterfaceItemIdentifier(item is ColumnItem ? "column" : "table")
         let cell = outlineView.makeView(withIdentifier: identifier, owner: nil) as? SidebarCell ?? SidebarCell(identifier: identifier)
-        if let table = item as? TableItem {
-            cell.configure(icon: "tablecells", title: table.entry.name, detail: table.entry.alias,
-                           toolTip: table.entry.url.path, bold: true)
+        if let schema = item as? SchemaItem {
+            cell.configure(icon: "doc.on.doc", title: schema.name, detail: schema.tables.count == 1 ? "1 sheet" : "\(schema.tables.count) sheets",
+                           toolTip: schema.url.path, bold: true)
+        } else if let table = item as? TableItem {
+            // Inside a workbook, a sheet shows its own name; its full SQL name is in the tooltip.
+            cell.configure(icon: "tablecells", title: table.entry.table, detail: table.entry.alias,
+                           toolTip: "\(table.entry.sqlName)\n\(table.entry.url.path)", bold: table.entry.schema == nil)
         } else if let column = item as? ColumnItem {
             cell.configure(icon: nil, title: column.column.name, detail: column.column.type,
                            toolTip: "\(column.column.name)  \(column.column.type)", bold: false)

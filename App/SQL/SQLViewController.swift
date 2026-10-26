@@ -69,7 +69,7 @@ final class SQLViewController: NSViewController {
         textView.onDropFiles = { [weak self] urls, insertNames in
             // Files dropped into the query become tables; their names go where they were dropped.
             self?.sidebar.add(urls) { entries in
-                if !entries.isEmpty { insertNames(entries.map { Catalog.sqlName($0.name) }.joined(separator: ", ")) }
+                if !entries.isEmpty { insertNames(entries.map(\.sqlName).joined(separator: ", ")) }
             }
         }
 
@@ -233,7 +233,7 @@ final class SQLViewController: NSViewController {
 
     /// Table used by templates: the one selected in the sidebar, else the first open file.
     private var templateTable: String {
-        sidebar.selectedTableName ?? Catalog.shared.tables.first?.name ?? "my_table"
+        sidebar.selectedTableName ?? Catalog.shared.tables.first?.sqlName ?? "my_table"
     }
 
     /// ⌘⇧T: pop up the templates menu.
@@ -243,7 +243,7 @@ final class SQLViewController: NSViewController {
 
     @objc private func insertTemplate(_ sender: NSMenuItem) {
         let template = SQLTemplate.all[sender.tag]
-        let sql = template.sql.replacingOccurrences(of: "{t}", with: Catalog.sqlName(templateTable))
+        let sql = template.sql.replacingOccurrences(of: "{t}", with: templateTable)
         replaceText(with: sql)
         if !selectNextPlaceholder() {
             textView.setSelectedRange(NSRange(location: (sql as NSString).length, length: 0))
@@ -396,7 +396,7 @@ extension SQLViewController: NSTextViewDelegate {
         let prefix = (textView.string as NSString).substring(with: charRange).lowercased()
         let tables = Catalog.shared.tables
         let candidates = tables.flatMap { $0.columns.map(\.name) }
-            + tables.flatMap { [Catalog.sqlName($0.name), $0.alias] }
+            + tables.flatMap { [$0.sqlName, $0.alias] + ($0.schema.map { [Catalog.sqlName($0)] } ?? []) }
             + SQLHighlighter.keywords
         var seen = Set<String>()
         return candidates.filter { $0.lowercased().hasPrefix(prefix) && seen.insert($0).inserted }

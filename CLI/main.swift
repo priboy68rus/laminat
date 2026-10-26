@@ -115,7 +115,8 @@ case "join":
         let added = try query.addFileSync(URL(fileURLWithPath: args[2]))
         let again = try query.addFileSync(URL(fileURLWithPath: args[2]))
         print("tables:", Catalog.shared.tables.map { "\($0.name) (\($0.alias))" }.joined(separator: ", "))
-        print("re-adding returns the same entry:", again.alias == added.alias, "| window table:", workspace.tableName)
+        print("re-adding returns the same entries:", again.map(\.alias) == added.map(\.alias),
+              "| window tables:", workspace.sheets.map(\.sqlName).joined(separator: ", "))
         var done = false
         query.run(args[3]) { result in
             switch result {
