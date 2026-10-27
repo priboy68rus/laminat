@@ -14,6 +14,8 @@ entries short and user-facing.
   ⇧⌥↑ / ⇧⌥↓ copy line, ⇧⌘K delete line
 - Format SQL (⇧⌥F): lays the query out one clause and one item per line, lowercase keywords, joins with
   their on conditions, case / in (…) / subqueries in blocks; with a selection, formats just those lines
+- Save queries as .sql files (File → Save ⌘S, Save As ⇧⌘S) and open .sql files as query tabs (File → Open,
+  Open Recent, Finder's Open With); a saved query asks before closing with unsaved changes
 
 ## 0.1.9
 

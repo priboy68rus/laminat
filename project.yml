@@ -70,8 +70,15 @@ targets:
             UTTypeTagSpecification:
               public.filename-extension: [parquet]
               public.mime-type: [application/vnd.apache.parquet]
-        # JSON Lines has no system type either; Laminat only reads it, so it is imported.
+        # JSON Lines has no system type either; Laminat only reads it, so it is imported. org.iso.sql is
+        # declared by Xcode; imported here for Macs without it.
         UTImportedTypeDeclarations:
+          - UTTypeIdentifier: org.iso.sql
+            UTTypeDescription: SQL query
+            UTTypeConformsTo: [public.plain-text, public.source-code]
+            UTTypeTagSpecification:
+              public.filename-extension: [sql]
+              public.mime-type: [application/sql]
           - UTTypeIdentifier: org.jsonlines.jsonl
             UTTypeDescription: JSON Lines file
             UTTypeConformsTo: [public.text, public.data]
@@ -100,6 +107,12 @@ targets:
             LSHandlerRank: Alternate
             LSItemContentTypes: [org.openxmlformats.spreadsheetml.sheet]
             NSDocumentClass: $(PRODUCT_MODULE_NAME).ParquetDocument
+          # Queries are saved as .sql; offered in Open With only, double-click stays with the editor.
+          - CFBundleTypeName: SQL query
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [org.iso.sql]
+            NSDocumentClass: $(PRODUCT_MODULE_NAME).QueryDocument
     dependencies:
       - target: LaminatQuickLook
         embed: true

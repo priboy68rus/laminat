@@ -9,6 +9,16 @@ final class ParquetDocument: NSDocument {
 
     override class var autosavesInPlace: Bool { false }
 
+    /// A viewer: File → Save / Save As don't apply to data files.
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        switch item.action {
+        case #selector(save(_:)), #selector(saveAs(_:)), #selector(saveTo(_:)), #selector(revertToSaved(_:)):
+            return false
+        default:
+            return super.validateUserInterfaceItem(item)
+        }
+    }
+
     override func read(from url: URL, ofType typeName: String) throws {
         loader = try FileLoader(url: url)  // checks the format; reading happens in the window
     }

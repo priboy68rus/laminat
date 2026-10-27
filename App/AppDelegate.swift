@@ -91,6 +91,8 @@ enum MainMenu {
             recentItem,
             .separator(),
             item("Close", #selector(NSWindow.performClose(_:)), "w"),
+            item("Save…", #selector(NSDocument.save(_:)), "s"),
+            item("Save As…", #selector(NSDocument.saveAs(_:)), "s", [.command, .shift]),
             .separator(),
             exportItem,
         ])

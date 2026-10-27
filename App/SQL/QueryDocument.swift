@@ -1,43 +1,96 @@
 import AppKit
 
 /// A query tab (File → New Query, ⌘N): SQL over every open file, in the same system tab group as the
-/// files. Not saved to disk, but restored after quitting (text, cursor, added files) like other windows;
-/// closing it frees its result and the files added only to it.
+/// files. Restored after quitting (text, cursor, added files) like other windows; closing it frees its
+/// result and the files added only to it.
+///
+/// A query can be saved as a .sql file (⌘S / ⇧⌘S), and .sql files open as query tabs. Only a saved query
+/// counts as edited ("Save changes?" on close); a new one is a scratchpad and closes without asking.
 final class QueryDocument: NSDocument {
+    static let sqlType = "org.iso.sql"
     private static var counter = 0
 
     let session: QuerySession
     private let title: String
     private var initialSQL: String
     private var runOnOpen: Bool
+    private weak var editor: SQLViewController?
+    /// The text as last read from or written to the file.
+    private var savedText: String?
 
-    init(sql: String, run: Bool, title restoredTitle: String? = nil) throws {
+    init(sql: String, run: Bool, title restoredTitle: String? = nil, numbered: Bool = true) throws {
         session = try QuerySession()
         if let restoredTitle {
             title = restoredTitle
             // Keep numbering after restored tabs: "Query 3" restored → the next new one is "Query 4".
             if let number = Int(restoredTitle.split(separator: " ").last ?? "") { Self.counter = max(Self.counter, number) }
-        } else {
+        } else if numbered {
             Self.counter += 1
             title = "Query \(Self.counter)"
+        } else {
+            title = "Query"
         }
         initialSQL = sql
         runOnOpen = run
         super.init()
     }
 
+    /// Used by the document system to open a .sql file (followed by `read(from:ofType:)`).
+    override convenience init() {
+        try! self.init(sql: "", run: false, numbered: false)
+    }
+
     override var displayName: String! {
-        get { title }
+        // The file's name as Finder shows it (with or without the extension, per the Finder setting).
+        get { fileURL.map { FileManager.default.displayName(atPath: $0.path) } ?? title }
         set {}
     }
 
     var queryTitle: String { title }
+    var text: String { editor?.queryText ?? initialSQL }
 
     override class var autosavesInPlace: Bool { false }
-    override var isDocumentEdited: Bool { false }  // nothing to save, so no "Save changes?" on close
+
+    override var isDocumentEdited: Bool { fileURL != nil && text != savedText }
+
+    /// The editor changed: refresh the edited dot in the close button.
+    func textDidChange() {
+        let edited = isDocumentEdited
+        for controller in windowControllers where controller.window?.isDocumentEdited != edited {
+            controller.setDocumentEdited(edited)
+        }
+    }
+
+    override func read(from url: URL, ofType typeName: String) throws {
+        let data = try Data(contentsOf: url)
+        let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+        initialSQL = text
+        savedText = text
+    }
+
+    override func data(ofType typeName: String) throws -> Data {
+        Data(text.utf8)
+    }
+
+    override func write(to url: URL, ofType typeName: String) throws {
+        let current = text
+        try Data(current.utf8).write(to: url, options: .atomic)
+        savedText = current
+    }
+
+    /// Restoring a saved query: tie it to its file again; `text` may hold changes that weren't saved.
+    func reattach(to url: URL) {
+        guard let data = try? Data(contentsOf: url) else { return }
+        savedText = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+        fileURL = url
+        fileType = Self.sqlType
+        fileModificationDate = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        textDidChange()
+    }
 
     override func makeWindowControllers() {
         let controller = SQLViewController(session: session, initialSQL: initialSQL)
+        editor = controller
         let window = DocumentWindow.make(content: controller)
         let windowController = QueryWindowController(window: window, sql: controller)
         windowController.shouldCascadeWindows = true
@@ -101,6 +154,8 @@ final class QueryWindowController: NSWindowController, NSMenuItemValidation, NST
         var selectionLocation: Int
         var selectionLength: Int
         var addedFiles: [String]
+        /// The .sql file of a saved query.
+        var file: String?
     }
     private static let runItem = NSToolbarItem.Identifier("run")
     private static let newQueryItem = NSToolbarItem.Identifier("newQuery")
@@ -120,7 +175,10 @@ final class QueryWindowController: NSWindowController, NSMenuItemValidation, NST
         window.restorationClass = QueryWindowController.self
         window.isRestorable = true
         window.delegate = self
-        sql.onTextChange = { [weak window] in window?.invalidateRestorableState() }
+        sql.onTextChange = { [weak self, weak window] in
+            window?.invalidateRestorableState()
+            (self?.document as? QueryDocument)?.textDidChange()
+        }
         catalogObserver = NotificationCenter.default.addObserver(forName: Catalog.didChange, object: nil, queue: .main) {
             [weak window] _ in window?.invalidateRestorableState()  // files added to / removed from the query
         }
@@ -134,7 +192,7 @@ final class QueryWindowController: NSWindowController, NSMenuItemValidation, NST
         guard let document = document as? QueryDocument else { return }
         let saved = SavedState(title: document.queryTitle, sql: sql.queryText,
                                selectionLocation: sql.selection.location, selectionLength: sql.selection.length,
-                               addedFiles: document.session.addedFiles.map(\.path))
+                               addedFiles: document.session.addedFiles.map(\.path), file: document.fileURL?.path)
         if let data = try? JSONEncoder().encode(saved) { state.encode(data, forKey: Self.stateKey) }
     }
 
@@ -155,6 +213,10 @@ final class QueryWindowController: NSWindowController, NSMenuItemValidation, NST
                 return
             }
             controller.sql.selection = NSRange(location: saved.selectionLocation, length: saved.selectionLength)
+            // A saved query whose file is gone comes back as a new one.
+            if let file = saved.file, FileManager.default.fileExists(atPath: file) {
+                document.reattach(to: URL(fileURLWithPath: file))
+            }
             // Files that are gone are skipped quietly.
             for path in saved.addedFiles where FileManager.default.fileExists(atPath: path) {
                 document.session.addFile(URL(fileURLWithPath: path)) { _ in }
