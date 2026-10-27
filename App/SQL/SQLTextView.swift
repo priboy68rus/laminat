@@ -93,8 +93,8 @@ final class SQLTextView: NSTextView, NSTextStorageDelegate {
 
         if let close = pairs[text], selection.length > 0 {
             let selected = ns.substring(with: selection)
-            replace(selection, with: text + selected + close,
-                    select: NSRange(location: selection.location + 1, length: selection.length), actionName: "Typing")
+            typeText(selection, with: text + selected + close,
+                    select: NSRange(location: selection.location + 1, length: selection.length))
             return true
         }
         guard selection.length == 0, text.utf16.count == 1 else { return false }
@@ -132,8 +132,7 @@ final class SQLTextView: NSTextView, NSTextStorageDelegate {
 
         if trimmed.hasSuffix("("), next == 41 {  // ")"
             let text = "\n" + newIndent + "\n" + indent
-            replace(selection, with: text, select: NSRange(location: selection.location + 1 + newIndent.utf16.count, length: 0),
-                    actionName: "Typing")
+            typeText(selection, with: text, select: NSRange(location: selection.location + 1 + newIndent.utf16.count, length: 0))
             return
         }
         // A line of only spaces doesn't keep them.
@@ -142,7 +141,7 @@ final class SQLTextView: NSTextView, NSTextStorageDelegate {
             range = NSRange(location: lineStart, length: NSMaxRange(selection) - lineStart)
         }
         let text = "\n" + newIndent
-        replace(range, with: text, select: NSRange(location: range.location + text.utf16.count, length: 0), actionName: "Typing")
+        typeText(range, with: text, select: NSRange(location: range.location + text.utf16.count, length: 0))
     }
 
     private static let clauseKeywords: Set<String> = [
@@ -196,8 +195,8 @@ final class SQLTextView: NSTextView, NSTextStorageDelegate {
         }
         guard let target, target != indent else { return }
         let delta = target.utf16.count - indent.utf16.count
-        replace(NSRange(location: lineStart, length: indent.utf16.count), with: target,
-                select: NSRange(location: cursor + delta, length: 0), actionName: "Typing")
+        typeText(NSRange(location: lineStart, length: indent.utf16.count), with: target,
+                select: NSRange(location: cursor + delta, length: 0))
     }
 
     /// Code tokens of the current statement before `position`.
@@ -279,8 +278,7 @@ final class SQLTextView: NSTextView, NSTextStorageDelegate {
         let next = cursor < ns.length ? ns.character(at: cursor) : 0
         let pairs: [unichar: unichar] = [40: 41, 91: 93, 39: 39, 34: 34]
         if pairs[previous] == next, next != 0, !(previous == 39 && isInStringOrComment(cursor - 1)) {
-            replace(NSRange(location: cursor - 1, length: 2), with: "", select: NSRange(location: cursor - 1, length: 0),
-                    actionName: "Typing")
+            typeText(NSRange(location: cursor - 1, length: 2), with: "", select: NSRange(location: cursor - 1, length: 0))
             return
         }
         let lineStart = ns.lineRange(for: NSRange(location: cursor, length: 0)).location
@@ -288,8 +286,8 @@ final class SQLTextView: NSTextView, NSTextStorageDelegate {
         if column > 0, ns.substring(with: NSRange(location: lineStart, length: column)).allSatisfy({ $0 == " " }) {
             let unit = Self.indentUnit.utf16.count
             let remove = column % unit == 0 ? unit : column % unit
-            replace(NSRange(location: cursor - remove, length: remove), with: "",
-                    select: NSRange(location: cursor - remove, length: 0), actionName: "Typing")
+            typeText(NSRange(location: cursor - remove, length: remove), with: "",
+                    select: NSRange(location: cursor - remove, length: 0))
             return
         }
         super.deleteBackward(sender)
@@ -302,8 +300,7 @@ final class SQLTextView: NSTextView, NSTextStorageDelegate {
         let lineStart = ns.lineRange(for: NSRange(location: selection.location, length: 0)).location
         let unit = Self.indentUnit.utf16.count
         let spaces = String(repeating: " ", count: unit - (selection.location - lineStart) % unit)
-        replace(selection, with: spaces, select: NSRange(location: selection.location + spaces.utf16.count, length: 0),
-                actionName: "Typing")
+        typeText(selection, with: spaces, select: NSRange(location: selection.location + spaces.utf16.count, length: 0))
     }
 
     var selectionSpansLines: Bool {
@@ -320,13 +317,39 @@ final class SQLTextView: NSTextView, NSTextStorageDelegate {
         return ns.lineRange(for: selection)
     }
 
+    /// An edit made while typing (auto-indent, pairs, Return…) goes through the normal typing path, so
+    /// Undo treats it like typed text and leaves just the cursor, not a selection.
+    private func typeText(_ range: NSRange, with text: String, select: NSRange) {
+        super.insertText(text, replacementRange: range)
+        setSelectedRange(select)
+        scrollRangeToVisible(select)
+    }
+
+    /// A command's edit (⌘/, ⌥↑…) as its own undo step. Undo puts back the selection from before the
+    /// command and Redo the one after it, instead of selecting the changed text.
     private func replace(_ range: NSRange, with text: String, select: NSRange, actionName: String) {
+        guard isEditable else { return }
+        // Registered before the text change, so Undo runs it after the text is restored.
+        restoreSelection(selectedRange(), next: select)
         guard shouldChangeText(in: range, replacementString: text) else { return }
         replaceCharacters(in: range, with: text)
         didChangeText()
         undoManager?.setActionName(actionName)
         setSelectedRange(select)
         scrollRangeToVisible(select)
+    }
+
+    private func restoreSelection(_ range: NSRange, next: NSRange) {
+        undoManager?.registerUndo(withTarget: self) { textView in
+            textView.restoreSelection(next, next: range)
+            // After the text system has applied its own selection for the undone edit.
+            DispatchQueue.main.async {
+                let length = (textView.string as NSString).length
+                let location = min(range.location, length)
+                textView.setSelectedRange(NSRange(location: location, length: min(range.length, length - location)))
+                textView.scrollRangeToVisible(textView.selectedRange())
+            }
+        }
     }
 
     /// Rewrites the selected lines in one undoable step. The cursor stays on its line; a selection grows

@@ -93,10 +93,9 @@ final class SQLCompletion {
     private func accept(_ item: CompletionItem) {
         let range = replaceRange
         let text = item.insert
-        guard NSMaxRange(range) <= (textView.string as NSString).length,
-              textView.shouldChangeText(in: range, replacementString: text) else { hide(); return }
-        textView.replaceCharacters(in: range, with: text)
-        textView.didChangeText()
+        guard NSMaxRange(range) <= (textView.string as NSString).length else { hide(); return }
+        // As typing, so Undo leaves the cursor instead of selecting the word.
+        textView.insertText(text, replacementRange: range)
         // A function puts the cursor between its brackets.
         let end = range.location + text.utf16.count - (item.kind == .function ? 1 : 0)
         textView.setSelectedRange(NSRange(location: end, length: 0))
