@@ -325,12 +325,12 @@ final class SQLTextView: NSTextView, NSTextStorageDelegate {
         scrollRangeToVisible(select)
     }
 
-    /// A command's edit (⌘/, ⌥↑…) as its own undo step. Undo puts back the selection from before the
-    /// command and Redo the one after it, instead of selecting the changed text.
+    /// A command's edit (⌘/, ⌥↑…) as its own undo step. Undo and Redo leave just the cursor where it was
+    /// (the end of the selection before / after the command) instead of selecting the changed text.
     private func replace(_ range: NSRange, with text: String, select: NSRange, actionName: String) {
         guard isEditable else { return }
         // Registered before the text change, so Undo runs it after the text is restored.
-        restoreSelection(selectedRange(), next: select)
+        restoreCursor(NSMaxRange(selectedRange()), next: NSMaxRange(select))
         guard shouldChangeText(in: range, replacementString: text) else { return }
         replaceCharacters(in: range, with: text)
         didChangeText()
@@ -339,16 +339,18 @@ final class SQLTextView: NSTextView, NSTextStorageDelegate {
         scrollRangeToVisible(select)
     }
 
-    private func restoreSelection(_ range: NSRange, next: NSRange) {
+    private func restoreCursor(_ location: Int, next: Int) {
         undoManager?.registerUndo(withTarget: self) { textView in
-            textView.restoreSelection(next, next: range)
-            // After the text system has applied its own selection for the undone edit.
-            DispatchQueue.main.async {
-                let length = (textView.string as NSString).length
-                let location = min(range.location, length)
-                textView.setSelectedRange(NSRange(location: location, length: min(range.length, length - location)))
-                textView.scrollRangeToVisible(textView.selectedRange())
+            textView.restoreCursor(next, next: location)
+            let place = { [weak textView] in
+                guard let textView else { return }
+                let cursor = NSRange(location: min(location, (textView.string as NSString).length), length: 0)
+                if textView.selectedRange() != cursor { textView.setSelectedRange(cursor) }
+                textView.scrollRangeToVisible(cursor)
             }
+            place()
+            // In case the text system sets its own selection after this step.
+            DispatchQueue.main.async(execute: place)
         }
     }
 
