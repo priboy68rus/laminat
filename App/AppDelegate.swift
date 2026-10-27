@@ -133,6 +133,23 @@ enum MainMenu {
             item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]),
         ])
 
+        // SQL editor commands; the shortcuts are VS Code's.
+        let up = String(Character(UnicodeScalar(NSUpArrowFunctionKey)!))
+        let down = String(Character(UnicodeScalar(NSDownArrowFunctionKey)!))
+        main.addSubmenu("Editor", [
+            item("Show Completions", #selector(SQLTextView.showCompletions(_:)), " ", .control),
+            .separator(),
+            item("Toggle Comment", #selector(SQLTextView.toggleComment(_:)), "/"),
+            item("Indent", #selector(SQLTextView.indentLines(_:)), "]"),
+            item("Outdent", #selector(SQLTextView.outdentLines(_:)), "["),
+            .separator(),
+            item("Move Line Up", #selector(SQLTextView.moveLineUp(_:)), up, .option),
+            item("Move Line Down", #selector(SQLTextView.moveLineDown(_:)), down, .option),
+            item("Copy Line Up", #selector(SQLTextView.copyLineUp(_:)), up, [.option, .shift]),
+            item("Copy Line Down", #selector(SQLTextView.copyLineDown(_:)), down, [.option, .shift]),
+            item("Delete Line", #selector(SQLTextView.deleteLine(_:)), "k", [.command, .shift]),
+        ])
+
         main.addSubmenu("Query", [
             item("Run", #selector(SQLViewController.runQuery(_:)), "\r"),
             item("Stop", #selector(SQLViewController.stopQuery(_:)), "."),

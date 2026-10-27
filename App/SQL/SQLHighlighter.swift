@@ -1,7 +1,8 @@
 import AppKit
 
 /// Regex-based SQL highlighting: keywords, numbers, strings, quoted identifiers, comments.
-/// Re-applied to the whole text on every edit, which is instant for query-sized text.
+/// Re-applied to the whole text on every edit, which is instant for query-sized text; long texts only
+/// redo the edited lines.
 enum SQLHighlighter {
     static let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
 
@@ -12,6 +13,7 @@ enum SQLHighlighter {
         RANGE QUALIFY SAMPLE USING DESCRIBE SUMMARIZE SHOW EXPLAIN ANALYZE VALUES EXCLUDE REPLACE \
         COLUMNS FILTER WINDOW RECURSIVE LATERAL TRY_CAST INTERVAL DATE TIMESTAMP
         """.split(separator: " ").map(String.init)
+    static let keywordSet = Set(keywords)
 
     private static let keywordRegex = try! NSRegularExpression(
         pattern: "\\b(" + keywords.joined(separator: "|") + ")\\b", options: [.caseInsensitive])
@@ -22,10 +24,18 @@ enum SQLHighlighter {
         pattern: "--[^\\n]*|/\\*[\\s\\S]*?(\\*/|$)")
     private static let placeholderRegex = try! NSRegularExpression(pattern: "⟨[^⟩]*⟩")
 
-    static func apply(to storage: NSTextStorage) {
+    /// Above this many characters an edit re-highlights only its lines (unless block comments make that
+    /// unreliable).
+    private static let fullPassLimit = 30_000
+
+    /// Called from the text storage delegate while the storage processes an edit.
+    static func apply(to storage: NSTextStorage, editedRange: NSRange? = nil) {
         let text = storage.string
-        let full = NSRange(location: 0, length: (text as NSString).length)
-        storage.beginEditing()
+        let ns = text as NSString
+        var full = NSRange(location: 0, length: ns.length)
+        if let editedRange, full.length > fullPassLimit, !text.contains("/*"), NSMaxRange(editedRange) <= full.length {
+            full = ns.paragraphRange(for: editedRange)
+        }
         storage.setAttributes([.font: font, .foregroundColor: NSColor.textColor], range: full)
         // Later rules win: a keyword inside a string or comment is coloured as the string / comment.
         let rules: [(NSRegularExpression, [NSAttributedString.Key: Any])] = [
@@ -42,7 +52,6 @@ enum SQLHighlighter {
                 if let range = match?.range { storage.addAttributes(attributes, range: range) }
             }
         }
-        storage.endEditing()
     }
 }
 

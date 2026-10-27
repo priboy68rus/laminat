@@ -1,8 +1,8 @@
 import AppKit
 
 /// A query tab (SPEC §1.5): tables sidebar on the left (every open file plus files added here);
-/// editor on top, result grid below. ⌘↩ runs the selection or the whole text, ⎋ / Stop cancels,
-/// ⌘⇧T inserts a template.
+/// editor on top, result grid below. ⌘↩ runs the selection or the statement under the cursor, ⎋ / Stop
+/// cancels, ⌘⇧T inserts a template.
 final class SQLViewController: NSViewController {
     let session: QuerySession
     private let initialSQL: String
@@ -26,6 +26,9 @@ final class SQLViewController: NSViewController {
     private lazy var sidebar = TablesSidebar(session: session)
     private let textView: SQLTextView
     private let editorScroll: NSScrollView
+    private lazy var ruler = LineNumberRuler(textView: textView)
+    private lazy var completion = SQLCompletion(textView: textView)
+    private var resignObserver: NSObjectProtocol?
     /// Run / Stop live in the window toolbar (QueryWindowController), like Xcode's run button.
     let runButton = NSButton(title: "Run", target: nil, action: nil)
     let stopButton = NSButton(title: "Stop", target: nil, action: nil)
@@ -70,9 +73,22 @@ final class SQLViewController: NSViewController {
             editorScroll.bottomAnchor.constraint(equalTo: editorPane.bottomAnchor),
         ])
 
+        editorScroll.verticalRulerView = ruler
+        editorScroll.hasVerticalRuler = true
+        editorScroll.rulersVisible = true
+        editorScroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: editorScroll.contentView,
+                                               queue: .main) { [weak self] _ in
+            self?.ruler.needsDisplay = true
+            self?.completion.hide()
+        }
+        textView.onTyped = { [weak self] text in self?.completion.typed(text) }
+        textView.onComplete = { [weak self] in self?.completion.show() }
+        textView.onDismissCompletion = { [weak self] in self?.completion.hide() }
+
         overlay.install(in: resultsContainer)
         overlay.onCancel = { [weak self] in self?.stopQuery(nil) }
-        showPlaceholder("Press ⌘↩ to run the query. Every open file is a table (see the list on the left).\nDrop more Parquet, CSV, JSON or Excel files on the list or the editor to join them; press Space on a table to preview it.")
+        showPlaceholder("Press ⌘↩ to run the query under the cursor. Every open file is a table (see the list on the left).\nDrop more Parquet, CSV, JSON or Excel files on the list or the editor to join them; press Space on a table to preview it.")
 
         // Tables sidebar: inserting names, adding files dropped on the editor.
         addChild(sidebar)
@@ -122,6 +138,10 @@ final class SQLViewController: NSViewController {
             outerSplit.setPosition(230, ofDividerAt: 0)
         }
         view.window?.makeFirstResponder(textView)
+        if let window = view.window, resignObserver == nil {
+            resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: window,
+                                                                    queue: .main) { [weak self] _ in self?.completion.hide() }
+        }
     }
 
     private var didPositionDivider = false
@@ -193,9 +213,26 @@ final class SQLViewController: NSViewController {
 
     @objc func runQuery(_ sender: Any?) {
         guard !isRunning else { return }
+        completion.hide()
+        let all = textView.string as NSString
         let selection = textView.selectedRange()
-        let text = selection.length > 0 ? (textView.string as NSString).substring(with: selection) : textView.string
+        let range: NSRange
+        if selection.length > 0 {
+            range = selection
+        } else if let statement = SQLLexer.statement(at: selection.location, tokens: textView.tokens, length: all.length) {
+            range = statement
+            // Several statements in the editor: flash the one that runs.
+            if SQLLexer.statements(textView.tokens, length: all.length).filter({ $0.code != nil }).count > 1 {
+                textView.showFindIndicator(for: statement)
+            }
+        } else {
+            NSSound.beep()
+            return
+        }
+        let text = all.substring(with: range)
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { NSSound.beep(); return }
+        textView.errorRange = nil
+        ruler.errorLine = nil
 
         isRunning = true
         statusLabel.textColor = .secondaryLabelColor
@@ -218,6 +255,7 @@ final class SQLViewController: NSViewController {
                 statusLabel.textColor = .systemRed
                 statusLabel.stringValue = "Error"
                 showError(error.localizedDescription)
+                markError(error.localizedDescription, ran: range)
             }
         }
     }
@@ -331,6 +369,55 @@ final class SQLViewController: NSViewController {
         if isRunning { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
     }
 
+    /// Underlines the place DuckDB points at ("LINE 2: …" and a caret under it) and puts the cursor there.
+    private func markError(_ message: String, ran range: NSRange) {
+        let all = textView.string as NSString
+        guard NSMaxRange(range) <= all.length,
+              let offset = Self.errorOffset(message, in: all.substring(with: range)) else { return }
+        let position = min(range.location + offset, all.length)
+        let tokens = textView.tokens.filter { $0.kind != .comment }
+        let token = tokens.first { $0.range.location <= position && position < NSMaxRange($0.range) }
+            ?? tokens.last { $0.range.location < position }
+        textView.errorRange = token?.range
+        ruler.errorLine = all.substring(to: position).reduce(into: 1) { count, c in if c == "\n" { count += 1 } }
+        textView.setSelectedRange(NSRange(location: position, length: 0))
+        textView.scrollRangeToVisible(NSRange(location: position, length: 0))
+        view.window?.makeFirstResponder(textView)
+    }
+
+    /// Offset (UTF-16) of the error in the statement that ran. DuckDB prints the line with the error
+    /// (shortened with "..." if long) and a caret under the spot; the line number may count the line
+    /// QuerySession wraps the statement in, so the line is found by its text.
+    static func errorOffset(_ message: String, in statement: String) -> Int? {
+        let lines = message.components(separatedBy: "\n")
+        guard let index = lines.firstIndex(where: { $0.hasPrefix("LINE ") }), index + 1 < lines.count,
+              let colon = lines[index].range(of: ": "),
+              let number = Int(lines[index].dropFirst(5).prefix { $0.isNumber }),
+              let caret = lines[index + 1].firstIndex(of: "^") else { return nil }
+        var column = lines[index + 1].distance(from: lines[index + 1].startIndex, to: caret)
+            - lines[index].distance(from: lines[index].startIndex, to: colon.upperBound)
+        var snippet = String(lines[index][colon.upperBound...])
+        if snippet.hasPrefix("...") { snippet.removeFirst(3); column -= 3 }
+        if snippet.hasSuffix("...") { snippet.removeLast(3) }
+        guard column >= 0 else { return nil }
+
+        let statementLines = statement.components(separatedBy: "\n")
+        var starts: [Int] = []
+        var start = 0
+        for line in statementLines {
+            starts.append(start)
+            start += line.utf16.count + 1
+        }
+        for candidate in [number - 1, number - 2, number] where statementLines.indices.contains(candidate) {
+            let line = statementLines[candidate]
+            let found = snippet.isEmpty ? line.startIndex..<line.startIndex : line.range(of: snippet)
+            guard let found else { continue }
+            let snippetStart = line.utf16.distance(from: line.utf16.startIndex, to: found.lowerBound)
+            return starts[candidate] + snippetStart + String(snippet.prefix(column)).utf16.count
+        }
+        return nil
+    }
+
     // MARK: Results
 
     private func show(_ result: QuerySession.SQLResult) {
@@ -391,35 +478,33 @@ final class SQLViewController: NSViewController {
 extension SQLViewController: NSTextViewDelegate {
     func textViewDidChangeSelection(_ notification: Notification) {
         onTextChange?()
+        ruler.needsDisplay = true
+        completion.selectionChanged()
     }
 
     func textDidChange(_ notification: Notification) {
         onTextChange?()
-        if let storage = textView.textStorage { SQLHighlighter.apply(to: storage) }
+        ruler.errorLine = nil
+        ruler.updateThickness()
     }
 
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if completion.handle(commandSelector) { return true }
         switch commandSelector {
         case #selector(NSResponder.insertTab(_:)):
-            return selectNextPlaceholder()
-        case #selector(NSResponder.cancelOperation(_:)) where isRunning:
-            stopQuery(nil)
+            // Tab: shift a multi-line selection, else jump to the next template placeholder, else indent.
+            if self.textView.selectionSpansLines {
+                self.textView.indentLines(nil)
+            } else if !selectNextPlaceholder() {
+                self.textView.insertSoftTab()
+            }
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            if isRunning { stopQuery(nil) } else { completion.show() }
             return true
         default:
             return false
         }
-    }
-
-    /// Completion (⎋ or F5): column names, table names and keywords matching the typed prefix.
-    func textView(_ textView: NSTextView, completions words: [String], forPartialWordRange charRange: NSRange,
-                  indexOfSelectedItem index: UnsafeMutablePointer<Int>?) -> [String] {
-        let prefix = (textView.string as NSString).substring(with: charRange).lowercased()
-        let tables = Catalog.shared.tables
-        let candidates = tables.flatMap { $0.columns.map(\.name) }
-            + tables.flatMap { [$0.sqlName, $0.alias] + ($0.schema.map { [Catalog.sqlName($0)] } ?? []) }
-            + SQLHighlighter.keywords
-        var seen = Set<String>()
-        return candidates.filter { $0.lowercased().hasPrefix(prefix) && seen.insert($0).inserted }
     }
 }
 

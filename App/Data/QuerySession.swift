@@ -123,7 +123,7 @@ final class QuerySession {
         let statement = Self.stripTrailingSemicolons(sql)
         let kinds = try connection.statementKinds(statement)
         guard kinds.count == 1 else {
-            throw EngineError(message: "Run one statement at a time: select it and press ⌘↩.")
+            throw EngineError(message: "Run one statement at a time: put the cursor in it (or select it) and press ⌘↩.")
         }
         guard kinds[0] == .select else {
             throw EngineError(message: "Only read-only queries (SELECT, WITH, DESCRIBE, SUMMARIZE, …) are allowed.")

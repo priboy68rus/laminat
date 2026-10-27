@@ -3,6 +3,16 @@
 The section for a version is shown in the in-app update window (scripts/make-appcast.sh), so keep the
 entries short and user-facing.
 
+## 0.1.10
+
+- SQL editor: completion as you type — tables after from / join, columns after t1. or an alias, the query's
+  columns with their types, DuckDB functions with signatures, keywords
+- ⌘↩ runs the query under the cursor when the editor holds several queries separated by ;
+- Errors are underlined in the query and the cursor jumps to them; line numbers on the left
+- Auto-indent in the house style (from / where / ) / end return to their level), paired brackets and quotes
+- VS Code shortcuts in the new Editor menu: ⌘/ comment, Tab / ⇧Tab indent, ⌥↑ / ⌥↓ move line,
+  ⇧⌥↑ / ⇧⌥↓ copy line, ⇧⌘K delete line
+
 ## 0.1.9
 
 - Laminat reopens where you left off after quitting: query tabs come back with their SQL and added files,
