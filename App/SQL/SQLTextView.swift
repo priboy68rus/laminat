@@ -490,6 +490,34 @@ final class SQLTextView: NSTextView, NSTextStorageDelegate {
         setSelectedRange(NSRange(location: line.location + min(column, lineLength), length: 0))
     }
 
+    /// ⇧⌥F: formats the selected lines, or the whole text (SQLFormatter). The cursor stays at the same
+    /// character: only whitespace changes.
+    @objc func formatSQL(_ sender: Any?) {
+        let ns = string as NSString
+        let selection = selectedRange()
+        let range = selection.length > 0 ? selectedLineRange() : NSRange(location: 0, length: ns.length)
+        let original = ns.substring(with: range)
+        let indent = selection.length > 0 ? String(original.prefix { $0 == " " || $0 == "\t" }) : ""
+        guard let formatted = SQLFormatter.format(original, indent: indent) else { NSSound.beep(); return }
+        guard formatted != original else { return }
+
+        func isSpace(_ c: UInt16) -> Bool { c == 32 || c == 9 || c == 10 || c == 13 }
+        let cursor = min(max(selection.location, range.location), NSMaxRange(range))
+        let charactersBefore = ns.substring(with: NSRange(location: range.location, length: cursor - range.location))
+            .utf16.filter { !isSpace($0) }.count
+        var offset = 0
+        var seen = 0
+        for c in formatted.utf16 {
+            if seen == charactersBefore { break }
+            if !isSpace(c) { seen += 1 }
+            offset += 1
+        }
+        let select = selection.length > 0
+            ? NSRange(location: range.location, length: formatted.utf16.count - (formatted.hasSuffix("\n") ? 1 : 0))
+            : NSRange(location: range.location + offset, length: 0)
+        replace(range, with: formatted, select: select, actionName: "Format SQL")
+    }
+
     @objc func showCompletions(_ sender: Any?) {
         onComplete?()
     }
@@ -502,7 +530,8 @@ final class SQLTextView: NSTextView, NSTextStorageDelegate {
         switch item.action {
         case #selector(toggleComment(_:)), #selector(indentLines(_:)), #selector(outdentLines(_:)),
              #selector(moveLineUp(_:)), #selector(moveLineDown(_:)), #selector(copyLineUp(_:)),
-             #selector(copyLineDown(_:)), #selector(deleteLine(_:)), #selector(showCompletions(_:)):
+             #selector(copyLineDown(_:)), #selector(deleteLine(_:)), #selector(showCompletions(_:)),
+             #selector(formatSQL(_:)):
             return isEditable
         default:
             return super.validateMenuItem(item)
@@ -579,6 +608,17 @@ final class SQLTextView: NSTextView, NSTextStorageDelegate {
         guard let token, token.kind == .word, token.range.length >= 2,
               !SQLHighlighter.keywordSet.contains(token.text.uppercased()) else { return nil }
         return token.text
+    }
+
+    /// ⇧⌥F by key position, so it works in any keyboard layout (the menu matches the character, which is
+    /// not "f" in e.g. the Russian layout).
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .function, .numericPad])
+        if event.keyCode == 3, modifiers == [.option, .shift] {  // kVK_ANSI_F
+            formatSQL(nil)
+            return
+        }
+        super.keyDown(with: event)
     }
 
     // MARK: Completion dismissal

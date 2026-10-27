@@ -148,6 +148,8 @@ enum MainMenu {
             item("Copy Line Up", #selector(SQLTextView.copyLineUp(_:)), up, [.option, .shift]),
             item("Copy Line Down", #selector(SQLTextView.copyLineDown(_:)), down, [.option, .shift]),
             item("Delete Line", #selector(SQLTextView.deleteLine(_:)), "k", [.command, .shift]),
+            .separator(),
+            item("Format SQL", #selector(SQLTextView.formatSQL(_:)), "f", [.option, .shift]),
         ])
 
         main.addSubmenu("Query", [

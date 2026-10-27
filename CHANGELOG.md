@@ -12,6 +12,8 @@ entries short and user-facing.
 - Auto-indent in the house style (from / where / ) / end return to their level), paired brackets and quotes
 - VS Code shortcuts in the new Editor menu: ⌘/ comment, Tab / ⇧Tab indent, ⌥↑ / ⌥↓ move line,
   ⇧⌥↑ / ⇧⌥↓ copy line, ⇧⌘K delete line
+- Format SQL (⇧⌥F): lays the query out one clause and one item per line, lowercase keywords, joins with
+  their on conditions, case / in (…) / subqueries in blocks; with a selection, formats just those lines
 
 ## 0.1.9
 
